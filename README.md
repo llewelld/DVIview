@@ -23,5 +23,5 @@ I'm releasing DVIview with agreement from Paul under a GPL licence (see the LICE
 
 - David Llewellyn-Jones
 - david@flypig.co.uk
-- http://www.flypig.oc.uk
+- http://www.flypig.co.uk/?to=armtex
 
