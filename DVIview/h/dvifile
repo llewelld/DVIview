@@ -1,0 +1,86 @@
+/** dvifile.h **/
+/* loads and manages a dvi file
+ * (c) Paul Field 1995
+ */
+
+#include "page.h"
+#include "units.h"
+
+typedef struct dvifile_str dvifile;
+
+
+dvifile* dvifile_construct(const char* filename);
+ /* Pre: filename != NULL
+  * Exceptions: exception_NO_MEMORY, os exceptions
+  * Creates and return a dvifile structure based on data from the dvi file filename.
+  */
+
+void dvifile_destruct(dvifile* df);
+ /* Reclaims memory associated with df
+  */
+
+page* dvifile_page(dvifile* df, unsigned page_num);
+ /* Pre: 0 <= page_num < dvifile_pages(df)
+  * Exceptions: exception_NO_MEMORY, os exceptions
+  * Returns page page_num of the dvifile and increments
+  * p's reference count. You should call page_dec_reference()
+  * when you are finished with the page.
+  */
+
+unsigned dvifile_pages(const dvifile* df);
+ /* Returns the number of pages in the dvifile
+  */
+
+const char *dvifile_filename(const dvifile* df);
+ /* Returns the filename of the dvi file
+  */
+
+unsigned dvifile_size(const dvifile* df);
+ /* Pre: df != NULL
+  * Returns the size of the dvi file in bytes
+  */
+
+void dvifile_time_stamp(const dvifile* df, unsigned char UTC[5]);
+ /* Pre: df != NULL
+  * Sets UTC to be the time stamp of the dvi file
+  */
+
+
+void dvifile_page_bounds(const dvifile* df, unsigned* height, unsigned* width);
+ /* Returns the height of the tallest page in the document and the width of the
+  * widest page in OS Units
+  */
+
+void dvifile_page_fonts(const dvifile* df, unsigned page_num, font_set* fonts);
+ /* Exceptions: exception_NO_MEMORY
+  * Adds the fonts used in page page_num of df, to fonts.
+  * The font set includes fonts used in diagrams.
+  * On exception fonts may contain some fonts.
+  */
+
+
+
+enum
+ { dvifile_DEFAULT_LEFT_OFFSET = DrawinInch,
+   dvifile_DEFAULT_TOP_OFFSET  = DrawinInch
+ };
+
+
+void dvifile_offsets(const dvifile* df, int* left, int* top);
+ /* Returns the offsets of pages from the top left corner of the
+  * paper in draw units.
+  * (The defaults are dvifile_DEFAULT_LEFT_OFFSET and dvifile_DEFAULT_TOP_OFFSET)
+  */
+
+
+void dvifile_set_offsets(dvifile* df, int left, int top);
+ /* Sets the offsets of pages from the top left corner of the
+  * paper in draw units.
+  */
+
+
+#ifndef NDEBUG
+void dvifile_debug_output(const dvifile* df);
+#else
+#define dvifile_debug_output(df)
+#endif

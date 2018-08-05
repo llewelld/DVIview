@@ -1,0 +1,24 @@
+/*** fast_trig.h ***/
+/* Implements trigonomic functions using table lookup.
+ * (c) Paul Field
+ * v1.00 - 22/11/1995
+ */
+
+
+double fast_sin(int angle);
+ /* Pre: fast_trig_initialise() has been called
+  *
+  * Returns the sine of the angle (angle is in degrees)
+  */
+
+
+double fast_cos(int angle);
+ /* Pre: fast_trig_initialise() has been called
+  *
+  * Returns the cosine of the angle (angle is in degrees)
+  */
+
+
+void fast_trig_initialise(void);
+ /* Sets up the fast_trig system
+  */

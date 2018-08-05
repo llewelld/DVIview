@@ -1,0 +1,6 @@
+dir <obey$dir>
+cc -c -fah -fussy -throwback c.set c.list c.queue
+libfile -c -o o.ADTLibD o.set o.list o.queue
+
+cc -c -ffah -fussy -DNDEBUG -throwback c.set c.list c.queue
+libfile -c -o o.ADTLib o.set o.list o.queue

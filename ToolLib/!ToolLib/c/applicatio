@@ -1,0 +1,221 @@
+/*** application.c ***/
+/* A standard framework for Toolbox/OSLib applications
+ * (c) Paul Field 1995
+ * v1.00 - 23/11/1995
+ */
+
+/* Notes:
+ *
+ * OSLib refers to toolbox events as 'actions' and, for consistancy, we follow
+ * this convention.
+ *
+ * The NOT_USED(var) macro is used to supress a compiler warnings about 'var'
+ * being declared but not being used. This warning occurs when the compiler
+ * features "ah" are enabled. You should activate these features because they
+ * enable useful warnings which can indicate bugs in your program.
+ */
+
+#define application_internal
+
+#include "application.h"
+
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "toolbox.h"
+
+#include "error.h"
+#include "nevent.h"
+#include "nev_toolbox.h"
+#include "nev_message.h"
+
+#ifdef MemCheck_MEMCHECK
+#include "MemCheck:MemCheck.h"
+#endif
+
+#ifdef HierProf_PROFILE
+#include "HierProf:HierProf.h"
+#endif
+
+
+/* Becomes TRUE when the program should exit */
+static bool finished = FALSE;
+
+
+
+static void application_quit(void)
+ /* Closes down program sub-systems */
+ { bool should_quit = TRUE;
+
+   /* Ideally close-down functions shouldn't throw exceptions but we catch
+    * exceptions just in case - otherwise we'll end up back in the poll
+    * loop and the program will crash (because some of the sub-systems are shut down)
+    * or the user won't be able to quit
+    */
+
+   if (this_application.quit != NULL)
+    { try
+       { should_quit = this_application.quit();
+       }
+      catch
+       { error_report_exception(exception_current());
+       }
+      catch_end
+    }
+
+   finished = should_quit;
+ }
+
+
+
+
+static nevent_result quit_action(bits action_code, toolbox_action* action, toolbox_block* id_block, void* handle)
+ { NOT_USED(action_code);
+   NOT_USED(action);
+   NOT_USED(id_block);
+   NOT_USED(handle);
+   assert(action_code == action_QUIT);
+
+   application_quit();
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result quit_message(wimp_message* message, void* handle)
+ { NOT_USED(message);
+   NOT_USED(handle);
+   assert(message->action == message_QUIT || message->action == message_PREQUIT);
+
+   application_quit();
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result toolbox_error_handler(bits action_code, toolbox_action* action, toolbox_block* id_block, void* handle)
+ { NOT_USED(action_code);
+   NOT_USED(handle);
+   NOT_USED(id_block);
+
+   error_report_os((os_error*)&action->data.error);
+   return nevent_HANDLED;
+ }
+
+
+
+
+static void toolbox_program_initialise(void)
+ { /* Initialise a 'general' toolbox program:
+    *   Initialise the toolbox
+    *   Initialise the event handler system
+    *   Set up handlers for toolbox errors and "Quit" messages and actions
+    */
+
+   messagetrans_control_block messages;
+   static toolbox_block       id_block;
+   wimp_message_list*         message_list;
+   toolbox_action_list*       action_list;
+
+   message_list = (wimp_message_list*)this_application.wimp_messages;
+   action_list  = (toolbox_action_list*)this_application.toolbox_actions;
+
+   toolbox_initialise
+    ( 0,
+      this_application.earliest_wimp_version,
+      message_list,
+      action_list,
+      this_application.directory_name,
+      &messages,
+      &id_block,
+      NULL,
+      NULL
+    );
+
+   nevent_initialise(&id_block);
+   nevent_toolbox_initialise(action_list, this_application.hash_table_size);
+   nevent_message_initialise(message_list);
+
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, action_QUIT,  quit_action,           NULL);
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, action_ERROR, toolbox_error_handler, NULL);
+
+   nevent_message_register_handler(message_QUIT,    quit_message, NULL);
+ }
+
+
+
+
+static void application_initialise(int argc, char* argv[])
+ { /* Initialise all the sub-systems involved in this program */
+
+   exception_initialise();
+
+   try
+    { toolbox_program_initialise();
+      this_application.initialise(argc, argv);
+    }
+   catch
+    { /* If we can't initialise, all we can do is report the error and exit */
+      error_report_exception(exception_current());
+      exit(EXIT_FAILURE);
+    }
+   catch_end
+ }
+
+
+
+
+int main(int argc, char* argv[])
+ { assert(this_application.directory_name != NULL);
+   assert(this_application.initialise != NULL);
+
+#ifndef NDEBUG
+   /* Make stderr unbuffered (ANSI/ISO says it is supposed to be unbuffered but it doesn't appear to be) */
+   setbuf(stderr,NULL);
+#endif
+
+#ifdef MemCheck_MEMCHECK
+   MemCheck_Init();
+   atexit(MemCheck_OutputBlocksInfo);
+   MemCheck_RegisterArgs(argc, argv);
+   MemCheck_SetStoreMallocFunctions(1);
+/*   MemCheck_InterceptSCLStringFunctions(); */
+#endif
+
+#ifdef HierProf_PROFILE
+   HierProf_ProfileAllFunctions();
+#endif
+
+   application_initialise(argc, argv);
+
+  /* Currently, we have to enable these checks after initialisation because
+   * flex_init(), which the application might call, causes problems
+   */
+#ifdef MemCheck_MEMCHECK
+   MemCheck_InterceptSCLStringFunctions();
+#endif
+
+
+   /* Loop until application is finished, polling and reporting any exceptions that are thrown */
+   while(!finished)
+    { try
+       { wimp_block poll_block;
+
+         nevent_poll(&poll_block, NULL);
+       }
+      catch
+       { error_report_exception(exception_current());
+       }
+      catch_end
+    }
+
+#ifdef HierProf_PROFILE
+   HierProf_OutputNow();
+#endif
+
+   /* We'll never actually get here */
+   return EXIT_SUCCESS;
+ }

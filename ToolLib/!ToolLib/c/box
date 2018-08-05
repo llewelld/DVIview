@@ -1,0 +1,130 @@
+/*** box.c ***/
+/* Handles interactions between os_boxes
+ * (c) Paul Field
+ */
+
+#include "box.h"
+
+#include <assert.h>
+#include "macros.h"
+
+
+#pragma no_check_stack
+
+bool box_overlaps(const os_box* box1, const os_box* box2)
+ { assert(boxdebug_is_valid(box1));
+   assert(boxdebug_is_valid(box2));
+
+   return box1->y1 > box2->y0 && box1->y0 < box2->y1 &&
+          box1->x1 > box2->x0 && box1->x0 < box2->x1;
+ }
+
+
+
+
+bool box_contains(const os_box* box1, const os_box* box2)
+ { assert(boxdebug_is_valid(box1));
+   assert(boxdebug_is_valid(box2));
+
+   return box2->y1 <= box1->y1 && box2->y0 >= box1->y0 &&
+          box2->x1 <= box1->x1 && box2->x0 >= box1->x0;
+ }
+
+
+
+
+bool box_clip(const os_box* window, os_box* area)
+ { assert(boxdebug_is_valid(window));
+   assert(boxdebug_is_valid(area));
+
+   if (area->y1 <= window->y0 || area->y0 >= window->y1 ||
+       area->x1 <= window->x0 || area->x0 >= window->x1)
+    { /* No overlap between the window and the area */
+      return FALSE;
+    }
+   else
+    { if (area->y1 > window->y1)
+       { area->y1 = window->y1;
+       }
+
+      if (area->y0 < window->y0)
+       { area->y0 = window->y0;
+       }
+
+      if (area->x0 < window->x0)
+       { area->x0 = window->x0;
+       }
+
+      if (area->x1 > window->x1)
+       { area->x1 = window->x1;
+       }
+
+      return TRUE;
+    }
+ }
+
+
+
+
+unsigned box_clip_around(const os_box* window, os_box* area, os_box clipped_area[4])
+ { unsigned pieces = 0;
+
+   assert(boxdebug_is_valid(window));
+   assert(boxdebug_is_valid(area));
+   assert(clipped_area != NULL);
+
+   if (!box_overlaps(window, area))
+    { clipped_area[0] = *area;
+      return 1;
+    }
+
+   if (area->y1 > window->y1)
+    { clipped_area[0]    = *area;
+      clipped_area[0].y0 = window->y1;
+      area->y1 = window->y1;
+      pieces++;
+    }
+
+   if (area->y0 < window->y0)
+    { clipped_area[pieces]      = *area;
+      clipped_area[pieces++].y1 = window->y0;
+      area->y0 = window->y0;
+    }
+
+   if (area->x0 < window->x0)
+    { clipped_area[pieces]      = *area;
+      clipped_area[pieces++].x1 = window->x0;
+      area->x0 = window->x0;
+    }
+
+   if (area->x1 > window->x1)
+    { clipped_area[pieces]      = *area;
+      clipped_area[pieces++].x0 = window->x1;
+      area->x1 = window->x1;
+    }
+
+   return pieces;
+ }
+
+
+
+
+void box_bounds(const os_box* box1, const os_box* box2, os_box* bounds)
+ { assert(boxdebug_is_valid(box1));
+   assert(boxdebug_is_valid(box2));
+   assert(bounds != NULL);
+
+   bounds->x0 = MIN(box1->x0, box2->x0);
+   bounds->y0 = MIN(box1->y0, box2->y0);
+   bounds->x1 = MAX(box1->x1, box2->x1);
+   bounds->y1 = MAX(box1->y1, box2->y1);
+ }
+
+
+
+
+#ifndef NDEBUG
+bool boxdebug_is_valid(const os_box* box)
+ { return box != NULL && box->x0 <= box->x1 && box->y0 <= box->y1;
+ }
+#endif

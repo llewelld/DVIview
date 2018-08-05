@@ -1,0 +1,133 @@
+/*** vp_area.c ***/
+
+#include "vp_area.h"
+
+#include <assert.h>
+#include <limits.h>
+#include <stdio.h>
+
+#include "pdriver.h"
+
+#include "allocate.h"
+#include "box.h"
+//#include "debug_io.h"
+
+
+#define DoubleToFixPoint(d) ((int) ((d)*65536.0))
+#define FixPointToDouble(f) ((f)/65536.0)
+
+#define OSToMillipoints(os) ((os)*400)
+
+
+
+struct vp_area_str
+ { vp_transform transform;
+ };
+
+
+
+vp_area* vp_area_construct(const vp_transform* transform)
+ { vp_area* area;
+
+   area = memory_allocate(sizeof(vp_area));
+   area->transform = *transform;
+   return area;
+ }
+
+
+
+
+void vp_area_destruct(vp_area* area)
+ { if (area != NULL)
+    { memory_free(area);
+    }
+ }
+
+
+
+
+/* Manage the vp_area's declarer */
+
+static void declare_rectangle(const os_box* rect, os_colour background, unsigned id);
+static void declare_rectangle_at(const os_box* rect, int x, int y, os_colour background, unsigned id);
+static void set_error_margin(unsigned margin);
+
+static print_rect_declarer rect_declarer = { declare_rectangle, declare_rectangle_at, set_error_margin };
+static vp_area*            declarer_area;
+static unsigned            declarer_id;
+static unsigned            declarer_error_margin = 2;
+
+
+
+print_rect_declarer* vp_area_rectangle_declarer(vp_area* area, unsigned area_id)
+ { assert(area);
+
+   declarer_area = area;
+   declarer_id   = area_id;
+   return &rect_declarer;
+ }
+
+
+
+
+static void declare_rectangle(const os_box* rect, os_colour background, unsigned id)
+ { assert(boxdebug_is_valid(rect));
+
+   declare_rectangle_at(rect, OSToMillipoints(rect->x0), OSToMillipoints(rect->y0), background, id);
+ }
+
+
+
+
+static void declare_rectangle_at(const os_box* rect, int x, int y, os_colour background, unsigned id)
+ { os_coord     rect_origin;
+   os_hom_trfm* t;
+   os_box       prect;
+
+   assert(boxdebug_is_valid(rect));
+
+#ifdef PRINT_VERBOSE
+   fprintf
+    ( stderr,
+      "print: rectangle (%d,%d),(%d,%d) declared with id = %u, positioned at (%d,%d)\n",
+      rect->x0,
+      rect->y0,
+      rect->x1,
+      rect->y1,
+      id,
+      x,
+      y
+    );
+   debug_io_flush();
+#endif
+
+   /* Apply transformation to position of rectangle to see where it ends up
+    * (relative to the page it's on) and then translate it so that it is relative
+    * to the origin of the current area
+    */
+   t = &declarer_area->transform.transformation;
+   rect_origin = declarer_area->transform.origin;
+   rect_origin.x += (int) (x*FixPointToDouble(t->entries[0][0]) + y*FixPointToDouble(t->entries[1][0]));
+   rect_origin.y += (int) (x*FixPointToDouble(t->entries[0][1]) + y*FixPointToDouble(t->entries[1][1]));
+
+   /* Add error margin to rect */
+   /* error_margin is naturally unsigned so the C binary conversions will use
+    * unsigned arithmetic (which we don't want because negative numbers can be
+    * generated) so we cast to an int to force signed arithmetic to be used
+    */
+   prect.x0 = rect->x0 - (int)declarer_error_margin;
+   prect.y0 = rect->y0 - (int)declarer_error_margin;
+   prect.x1 = rect->x1 + (int)declarer_error_margin;
+   prect.y1 = rect->y1 + (int)declarer_error_margin;
+
+   assert(id <= UINT_MAX / vp_area_id_limit);
+
+   pdriver_give_rectangle(id*vp_area_id_limit + declarer_id, &prect, t, &rect_origin, background);
+ }
+
+
+
+
+static void set_error_margin(unsigned margin)
+ { declarer_error_margin = margin;
+ }

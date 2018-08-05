@@ -1,0 +1,138 @@
+/**** sys_font_list.c ****/
+/* Maintains a list of system fonts
+ * (c) Paul Field
+ */
+
+#include "sys_font_list.h"
+
+
+#include <assert.h>
+
+#include "font.h"
+
+#include "ci_string.h"
+#include "exception.h"
+
+
+static list* sys_font_list;
+
+#ifndef NDEBUG
+static bool constructed = FALSE;
+#endif
+
+
+
+list_ptr sys_font_list_head(void)
+ { assert(constructed);
+
+   return list_ptr_head(sys_font_list);
+ }
+
+
+
+
+bool sys_font_list_contains(const char* font_name)
+ { list_ptr lptr;
+
+   assert(constructed);
+   assert(font_name != NULL);
+
+   for (lptr = list_ptr_head(sys_font_list); !list_ptr_past_the_end(lptr); list_ptr_inc(&lptr))
+    { if (case_insensitive_strcmp(font_name, list_ptr_element(lptr)) == 0)
+       { return TRUE;
+       }
+    }
+   return FALSE;
+ }
+
+
+
+
+void sys_font_list_update(void)
+ { assert(constructed);
+
+   list_destroy(sys_font_list);
+#ifndef NDEBUG
+   constructed = FALSE;
+#endif
+   sys_font_list_construct();
+ }
+
+
+
+
+void sys_font_list_construct(void)
+ { assert(!constructed);
+
+   sys_font_list = list_create();
+
+   try
+    { font_list_context context;
+      int               size;
+
+      context = font_RETURN_FONT_NAME;
+
+      while (font_list_fonts(0, context, 0, NULL, 0, NULL, &size, NULL) != -1)
+       { byte* font_identifier;
+
+         font_identifier = list_alloc_element(size);
+         list_cons(sys_font_list, font_identifier);
+         context = font_list_fonts(font_identifier, context, size, NULL, 0, NULL, NULL, NULL);
+       }
+    }
+   catch
+    { list_destroy(sys_font_list);
+      throw();
+    }
+   catch_end
+
+#ifndef NDEBUG
+   constructed = TRUE;
+#endif
+ }
+
+
+
+
+void sys_font_list_destruct(void)
+ { assert(constructed);
+
+   /* Only destruct when MemCheck is in operation.
+    * Normally we rely on the OS to tidy up automatically (it's more efficient)
+    */
+#ifdef MemCheck_MEMCHECK
+   list_destroy(sys_font_list);
+#endif
+
+#ifndef NDEBUG
+   constructed = FALSE;
+#endif
+ }
+
+
+
+
+#ifdef TEST_SYS_FONT
+#include <stdio.h>
+
+int main(void)
+ { list_ptr lptr;
+
+   sys_font_list_construct();
+
+   puts("Fonts:");
+   for (lptr = sys_font_list_head(); !list_ptr_past_the_end(lptr); list_ptr_inc(&lptr))
+    { puts(list_ptr_element(lptr));
+    }
+
+   puts("-----\nDoes list contain 'Wibble'?");
+   puts(sys_font_list_contains("Wibble") ? "Yes" : "No");
+
+   puts("-----\nDoes list contain 'Trinity.Medium'?");
+   puts(sys_font_list_contains("Trinity.Medium") ? "Yes" : "No");
+
+   return 0;
+ }
+
+
+#endif

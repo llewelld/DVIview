@@ -1,0 +1,48 @@
+/*** allocate.c ***/
+/* Exception-throwing variants of malloc() etc.
+ * (c) Paul Field
+ * v1.00 1/9/1995
+ */
+
+#include "allocate.h"
+
+#include <stdlib.h>
+#include <assert.h>
+#include "exception.h"
+
+
+void* memory_allocate(size_t size)
+ { void* memory;
+
+   assert(size > 0);
+
+   memory = malloc(size);
+   if (memory == NULL)
+    { throw_user(exception_NO_MEMORY);
+    }
+
+   assert(memory != NULL);
+   return memory;
+ }
+
+
+
+
+void* memory_reallocate(void* old_memory, size_t new_size)
+ { void* new_memory;
+
+   assert(!(old_memory == NULL && new_size == 0));
+
+   new_memory = realloc(old_memory, new_size);
+   if (new_memory == NULL && new_size != 0)
+    { throw_user(exception_NO_MEMORY);
+    }
+   return new_memory;
+ }
+
+
+
+
+void memory_free(void* memory)
+ { free(memory);
+ }

@@ -1,0 +1,38 @@
+Libraries = OSLib:o.OSLib C:o.stubs
+
+Target = ^.^.!Click.!RunImage
+
+ASMFlags  = $(ASMExtra) -Stamp -NoCache -CloseExec -Quit -throwback
+CCFlags   = $(CCExtra) -D__swi -fussy -fah -depend !Depend -throwback -I,@.^,C:
+CPPFlags  = $(CPPExtra) -depend !Depend -throwback -I,@.^,C:
+LinkFlags = $(LinkExtra)
+
+ASM  = objasm $(ASMFlags)
+CC   = cc -c $(CCFlags)
+CPP  = Makatic._C++ c++ -c $(CPPFlags)
+LINK = Link -aif -c++ $(LinkFlags)
+
+
+
+# Don't alter anything below this...
+
+
+VPATH = @.^
+
+.SUFFIXES: .o .s .c .c++
+
+$(Target): $(ObjectFiles) $(ExtraLibs) $(Libraries)
+           $(LINK) -o $@ $(ObjectFiles) $(ExtraLibs) $(Libraries)
+           Settype $@ ff8
+
+.s.o:
+           $(ASM) -from $< -to $@
+
+.c.o:
+           $(CC) -o $@ $<
+
+.c++.o:
+           $(CPP) -o $@ $<
+
+
+# Dynamic dependencies:

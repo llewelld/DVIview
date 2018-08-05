@@ -1,0 +1,68 @@
+/*** Tree ***/
+/* Tree drawing program
+ * (c) Paul Field 1995
+ * v1.00 - 22/11/1995
+ */
+
+
+#include <stdio.h>
+
+#include "application.h"
+#include "fast_trig.h"
+#include "nev_wimp.h"
+#include "shifting.h"
+
+#include "treewindow.h"
+#include "treeparams.h"
+
+
+
+static void tree_initialise(int argc, char *argv[])
+ { NOT_USED(argc);
+   NOT_USED(argv);
+
+#ifndef NDEBUG
+   /* Redirect error stream */
+   freopen("pipe:$.debug", "w", stderr);
+#endif
+
+   nevent_wimp_initialise();
+
+   tree_window_initialise();
+   tree_params_initialise();
+   shifting_initialise_for_toolbox();
+   fast_trig_initialise();
+ }
+
+
+
+
+/* Respond to all actions and messages */
+static const int toolbox_actions[] =
+ { 0x100,
+   0x44ec0,
+   0x82a91,
+   0x82bc2,
+   0x82bc3,
+   0
+ };
+
+
+#if 0
+/* No wimp messages used - we use a NULL parameter for wimp_messages */
+static const int wimp_messages[] =
+ {
+ };
+#endif
+
+
+/* The variable which the application system required */
+application this_application =
+ { "<Tree$Dir>",
+   310,
+   toolbox_actions,
+   NULL, /*wimp_messages,*/
+   5,
+   tree_initialise,
+   NULL
+ };

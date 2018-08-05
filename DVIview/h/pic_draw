@@ -1,0 +1,103 @@
+/**** pic_draw.h ****/
+/* Handles drawfile pictures
+ * (c) Paul Field 1996
+ */
+
+#ifndef os_H
+#include "os.h"
+#endif
+
+#include "font_set.h"
+
+typedef struct draw_pic_str draw_pic;
+
+
+
+draw_pic* draw_pic_construct(const char* file_name);
+ /* Pre: file_name != NULL
+  *      file_name refers to a Draw file
+  * Exceptions: exception_NO_MEMORY, os exceptions
+  * Creates a draw picture from the draw file 'file_name' and returns it
+  */
+
+
+void draw_pic_destruct(draw_pic *pic);
+ /* Frees the memory associated with 'pic' (pic may be NULL)
+  */
+
+
+void draw_pic_draw
+ ( const draw_pic* pic,
+   int             pic_origin_x,
+   int             pic_origin_y,
+   unsigned        scale_percent_x,
+   unsigned        scale_percent_y,
+   const os_box*   clip);
+ /* Pre: pic != NULL
+  *      clip != NULL
+  *      (pic_origin_x, pic_origin_y) is the screen position of the bottom left of the picture (in Draw units)
+  *      (scale_percent_x, scale_percent_y) is the magnification of the picture on each axis as a percentage
+  *      clip is the current graphics clipping rectangle (typically returned by the Wimp)
+  * Exceptions: os exceptions
+  * Draws the picture
+  */
+
+
+void draw_pic_size(const draw_pic* pic, unsigned* width, unsigned* height);
+ /* Pre: pic != NULL
+  *      width != NULL
+  *      height != NULL
+  * Returns the width and height of the draw_pic in Draw units
+  */
+
+
+void draw_pic_add_fonts_to_set(const draw_pic* pic, font_set* fonts);
+ /* Pre: pic != NULL
+  *      fonts != NULL
+  * Post: font_set = font_set union the fonts required for pic
+  * Exceptions: exception_NO_MEMORY
+  * On exception some fonts may have been added to font_set
+  */
+
+
+void draw_pic_file_add_fonts_to_set(const char* file_name, font_set* fonts);
+ /* Pre: file_name != NULL
+  *      fonts != NULL
+  *      file_name refers to a Draw file
+  * Post: font_set = font_set union the fonts required for the picture in file_name.
+  * Exceptions: exception_NO_MEMORY, os exceptions, command parsing errors
+  * On exception some fonts may have been added to the font_set
+  */
+
+
+void draw_pic_save
+ ( const draw_pic* pic,
+   int             pic_origin_x,
+   int             pic_origin_y,
+   unsigned        scale_percent_x,
+   unsigned        scale_percent_y,
+   const font_set* fonts
+ );
+ /* Pre: pic != NULL
+  *      fonts != NULL
+  *      (pic_origin_x, pic_origin_y) is the screen position of the bottom left of the picture (in Draw units)
+  *      (scale_percent_x, scale_percent_y) is the magnification of the picture on each axis as a percentage
+  *      fonts contains all the fonts used in the picture with each id equal to the
+  *        font id used in the font_table object which should have been output before this call
+  * Exceptions: os exceptions
+  * Saves the diagram as a stream of draw objects using the save_buffer module
+  */
+
+
+unsigned draw_pic_estimate_save_size(const draw_pic* pic);
+ /* Pre: pic != NULL
+  *      Returns the approximate size of the output produced by draw_pic_save()
+  */
+
+
+
+#ifndef NDEBUG
+void draw_pic_debug_output(const draw_pic* pic);
+#else
+#define draw_pic_debug_output(p)
+#endif

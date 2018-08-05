@@ -1,0 +1,409 @@
+/*** nev_toolbox.c ***/
+/* Handle toolbox actions
+ * By Paul Field
+ */
+
+#include "nev_toolbox.h"
+
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "allocate.h"
+#include "list.h"
+
+#include "nev_support.h"
+
+
+typedef struct toolbox_handler_info
+ { unsigned               action_num;
+   toolbox_o              object_id;
+   nevent_toolbox_handler handler;
+   void*                  handle;
+ }
+toolbox_handler_info;
+
+
+static list**   hash_table;
+static list*    all_actions_handler_list;
+static unsigned hash_table_size;
+
+
+/* We can't currently use object id in the hash function because users can register
+ * for an action occurring on 'any object' and we would need to deal with these specially
+#define HASH(action_num, object_id) (((unsigned)object_id + action_num) % hash_table_size)
+*/
+
+#define HASH(action_num, object_id) ((action_num) % hash_table_size)
+
+
+
+
+#ifndef NDEBUG
+#include <string.h>
+#include "set.h"
+
+static bool initialised = FALSE;
+static bits debug_action_num;
+
+static const toolbox_action_list* all_actions;
+
+static set* action_set;
+
+
+static int compare_actions(const void* vnum1, const void* vnum2)
+ { bits num1 = *(const int *)vnum1;
+   bits num2 = *(const int *)vnum2;
+
+   if (num1 < num2)
+    { return -1;
+    }
+   if (num1 == num2)
+    { return 0;
+    }
+   return 1;
+ }
+
+
+
+
+static void output_action_set(void)
+ { set_ptr ptr;
+
+   fputs
+    ( "--------------------------\n"
+      "Toolbox actions for which handlers were registered:\n"
+      " {\n",
+      stderr
+    );
+
+   for (ptr = set_ptr_first(action_set); !set_ptr_past_the_end(ptr); set_ptr_inc(&ptr))
+    { bits action_num;
+
+      action_num = *(bits *)set_ptr_element(ptr);
+      if (action_num != nevent_ALL_ACTIONS)
+       { fprintf(stderr,"   0x%x,\n", action_num);
+       }
+    }
+
+   fputs("   0\n };\n", stderr);
+ }
+
+
+
+
+static void check_action_is_delivered(bits action_num)
+ { /* If the list only contains 0 then all actions are delivered */
+   if (all_actions->action_nos[0] != 0)
+    { /* Messages are explicitly listed - so look for our messages */
+      unsigned i     = 0;
+      bool     end   = FALSE;
+      bool     found = FALSE;
+
+      do
+       { end   = (all_actions->action_nos[i] == 0);
+         found = (all_actions->action_nos[i] == action_num);
+         i++;
+       }
+      while(!end && !found);
+
+      if (!found)
+       { fprintf
+          ( stderr,
+            "Toolbox action %x was not passed to toolbox_initialise() but a handler has been registered for it\n",
+            action_num
+          );
+       }
+    }
+ }
+
+
+/* Statistics on the hash table */
+
+static unsigned* max_lengths;
+
+
+static void stats_output(void)
+ { unsigned idx;
+
+   fputs
+    ( "--------------------------\n"
+      "Maximum length of hash table chains for Toolbox action registration:\n",
+      stderr
+    );
+
+   for (idx = 0; idx < hash_table_size; idx++)
+    { fprintf(stderr, "%u, %u\n", idx, max_lengths[idx]);
+    }
+
+   memory_free(max_lengths);
+ }
+
+
+
+
+static void stats_initialise(void)
+ { max_lengths = memory_allocate(hash_table_size * sizeof(unsigned));
+   memset(max_lengths, 0, hash_table_size * sizeof(unsigned));
+
+   atexit(stats_output);
+ }
+
+
+
+
+static void stats_handler_added(unsigned idx)
+ { unsigned new_length;
+
+   new_length = list_length(hash_table[idx]);
+   if (new_length > max_lengths[idx])
+    { max_lengths[idx] = new_length;
+    }
+ }
+
+
+#else
+/* Define 'null' functions - so no code is included when the production version is compiled */
+#define check_action_is_delivered(a)
+#define stats_handler_added(i)
+#endif
+
+
+
+
+static bool call_handlers(const list* handlers, toolbox_action* action, toolbox_block* id_block)
+ { list_ptr ptr;
+
+   for (ptr = list_ptr_head(handlers); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+    { const toolbox_handler_info* handler_info;
+
+      handler_info = list_ptr_element(ptr);
+      if
+       ( ( handler_info->action_num == nevent_ALL_ACTIONS ||
+           handler_info->action_num == action->action_no
+         )
+         &&
+         ( handler_info->object_id == nevent_ALL_OBJECTS ||
+           handler_info->object_id == id_block->this_obj
+         )
+       )
+       { if (handler_info->handler(action->action_no, action, id_block, handler_info->handle))
+          { return TRUE;
+          }
+       }
+    }
+   return FALSE;
+ }
+
+
+
+
+
+static bool nevent_toolbox_dispatch(wimp_event_no event_num, wimp_block* poll_block, toolbox_block* id_block)
+ { if (event_num == toolbox_EVENT)
+    { toolbox_action* action = (toolbox_action*)poll_block->reserved;
+
+      if (!call_handlers(hash_table[HASH(action->action_no, id_block->this_obj)], action, id_block))
+       { call_handlers(all_actions_handler_list, action, id_block);
+       }
+      return TRUE;
+    }
+   return FALSE;
+ }
+
+
+
+
+void nevent_toolbox_register_handler(toolbox_o object_id, bits action_num, nevent_toolbox_handler handler, void* handle)
+ { toolbox_handler_info* handler_info;
+
+   assert(initialised);
+   assert(handler != NULL);
+   check_action_is_delivered(action_num);
+#ifndef NDEBUG
+   set_insert(action_set, &action_num);
+#endif
+
+   handler_info = list_alloc_element(sizeof(toolbox_handler_info));
+   handler_info->object_id  = object_id;
+   handler_info->action_num = action_num;
+   handler_info->handler    = handler;
+   handler_info->handle     = handle;
+
+   if (action_num == nevent_ALL_ACTIONS)
+    { list_cons(all_actions_handler_list, handler_info);
+    }
+   else
+    { unsigned hash_idx;
+
+      hash_idx = HASH(action_num, object_id);
+
+      list_cons(hash_table[hash_idx], handler_info);
+      stats_handler_added(hash_idx);
+    }
+ }
+
+
+
+
+static void remove_from_list(list* handlers, toolbox_o object_id, bits action_num, nevent_toolbox_handler handler, void* handle)
+ { toolbox_handler_info* handler_info;
+
+   assert(initialised);
+   assert(handler != NULL);
+
+#ifndef NDEBUG
+   if (list_is_empty(handlers))
+    { fprintf
+       ( stderr,
+         "Error: Unable to deregister nevent_toolbox_handler %p on object %p for action %u with handle %p\n",
+         handler,
+         object_id,
+         debug_action_num,
+         handle
+       );
+      return;
+    }
+#endif
+
+   handler_info = list_remove_head(handlers);
+   if
+    ( handler_info->object_id  == object_id   &&
+      handler_info->action_num == action_num  &&
+      handler_info->handler    == handler     &&
+      handler_info->handle     == handle
+    )
+    { list_free_element(handler_info);
+    }
+   else
+    { remove_from_list(handlers, object_id, action_num, handler, handle);
+      list_cons(handlers, handler_info);
+    }
+ }
+
+
+
+
+void nevent_toolbox_deregister_handler(toolbox_o object_id, bits action_num, nevent_toolbox_handler handler, void* handle)
+ { list*                 handlers;
+
+   assert(initialised);
+   assert(handler != NULL);
+
+#ifndef NDEBUG
+   debug_action_num = action_num;
+#endif
+
+   if (action_num == nevent_ALL_ACTIONS)
+    { handlers = all_actions_handler_list;
+    }
+   else
+    { handlers = hash_table[action_num % hash_table_size];
+    }
+
+   remove_from_list(handlers, object_id, action_num, handler, handle);
+ }
+
+
+
+
+
+static void remove_all_from_list(list* handlers, toolbox_o object_id)
+ { if (!list_is_empty(handlers))
+    { toolbox_handler_info* handler_info;
+
+      handler_info = list_remove_head(handlers);
+      if (handler_info->object_id == object_id)
+       { list_free_element(handler_info);
+       }
+      else
+       { remove_all_from_list(handlers, object_id);
+         list_cons(handlers, handler_info);
+       }
+    }
+ }
+
+
+
+
+void nevent_toolbox_deregister_all_handlers(toolbox_o object_id)
+ { unsigned table_idx;
+
+   assert(initialised);
+   assert(object_id != nevent_ALL_OBJECTS);
+
+   for (table_idx = 0; table_idx < hash_table_size; table_idx++)
+    { remove_all_from_list(hash_table[table_idx], object_id);
+    }
+
+   remove_all_from_list(all_actions_handler_list, object_id);
+ }
+
+
+
+
+#ifndef NDEBUG
+/* Clear up memory used - only needed in debug code, because OS does it automatically
+ * but tidying up stop memory leak checkers (e.g. MemCheck) from listing all the
+ * memory we used
+ */
+static void tidy_up(void)
+ { unsigned n;
+
+   for (n = 0; n < hash_table_size; n++)
+    { list_destroy(hash_table[n]);
+    }
+   memory_free(hash_table);
+
+   list_destroy(all_actions_handler_list);
+   set_destroy(action_set);
+ }
+#endif
+
+
+
+
+void nevent_toolbox_initialise(const toolbox_action_list* action_nums, unsigned hash_size)
+ { unsigned n;
+
+   assert(!initialised);
+   assert(action_nums);
+   assert(hash_size > 0);
+
+   hash_table      = memory_allocate(hash_size * sizeof(list*));
+   hash_table_size = hash_size;
+
+   for (n = 0; n < hash_size; n++)
+    { hash_table[n] = list_create();
+    }
+
+   all_actions_handler_list = list_create();
+
+   nevent_support_register_dispatcher(nevent_toolbox_dispatch);
+
+#ifndef NDEBUG
+   initialised = TRUE;
+   all_actions = action_nums;
+
+   stats_initialise();
+
+   action_set = set_create(compare_actions, NULL, sizeof(int));
+
+   /* N.B. atexit handlers called in reverse order of registration */
+   atexit(tidy_up);
+   atexit(output_action_set);
+
+#else
+   NOT_USED(action_nums);
+#endif
+ }
+
+
+
+
+#ifndef NDEBUG
+void nevent_toolbox_register_action(bits action_num)
+ { check_action_is_delivered(action_num);
+   set_insert(action_set, &action_num);
+ }
+#endif

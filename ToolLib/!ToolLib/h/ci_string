@@ -1,0 +1,19 @@
+/*** ci_string.h ***/
+/* Case insensitive string operations
+ * (c) Paul Field
+ * v1.00 - 11/6/1996
+ */
+
+#include <stddef.h>
+
+
+int case_insensitive_strcmp(const char* s1, const char* s2);
+ /* Equivalent to applying to_upper() to all characters in s1 and s2
+  * then applying strcmp
+  */
+
+
+int case_insensitive_strncmp(const char* s1, const char* s2, size_t n);
+ /* Equivalent to applying to_upper() to all characters in s1 and s2
+  * then applying strncmp
+  */

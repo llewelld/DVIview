@@ -1,0 +1,180 @@
+/*** picture.c ***/
+/* A picture is some form of graphic stored in a file.
+ * Currently supported graphics are: Sprite, Draw, JPEG
+ * (c) Paul Field 1995
+ */
+
+/* The picture object is simply responsible for routing
+ * picture calls to the appropriate 'real' picture type
+ */
+
+
+#include "picture.h"
+
+#include "osfile.h"
+#include "jpeg.h"
+
+#include "allocate.h"
+#include "exception.h"
+#include "draw_pic.h"
+#include "sprite_pic.h"
+#include "jpeg_pic.h"
+
+
+/* Constant used for debugging: insert 'assert(NeverReachHere)'
+ * at points which should never be executed
+ */
+enum { NeverReachHere = FALSE };
+
+
+typedef enum picture_type_enum
+ { picture_sprite, picture_jpeg, picture_drawfile
+ }picture_type;
+
+
+struct picture_str
+ { picture_type type;
+   union
+    { sprite_pic *sprite;
+      jpeg_pic   *jpeg;
+      draw_pic   *draw;
+    }data;
+ };
+
+
+
+
+bool picture_supported_file_type(unsigned file_type)
+ { return(file_type == osfile_TYPE_SPRITE ||
+          file_type == osfile_TYPE_DRAW   ||
+          (file_type == jpeg_FILE_TYPE && jpeg_pic_supported()));
+ }
+
+
+
+
+picture *picture_create(const char *file_name)
+ { picture *pic;
+
+   assert(file_name != NULL);
+
+   pic = memory_allocate(sizeof(*pic));
+
+   try
+    { bits file_type;
+
+      osfile_read_stamped_no_path(file_name, NULL, NULL, NULL, NULL, &file_type);
+      assert(picture_supported_file_type(file_type));
+
+      switch(file_type)
+       {  case osfile_TYPE_DRAW:
+           pic->type = picture_drawfile;
+           pic->data.draw = draw_pic_create(file_name);
+           break;
+
+          case osfile_TYPE_SPRITE:
+           pic->type = picture_sprite;
+           pic->data.sprite = sprite_pic_create(file_name);
+           break;
+
+         case jpeg_FILE_TYPE:
+           pic->type = picture_jpeg;
+           pic->data.jpeg = jpeg_pic_create(file_name);
+           break;
+
+         default:
+           assert(NeverReachHere);
+       }
+    }
+   catch
+    { memory_free(pic);
+      throw();
+    }
+   catch_end
+
+   return pic;
+ }
+
+
+
+void picture_destroy(picture *pic)
+ { if (pic != NULL)
+    { switch(pic->type)
+       { case picture_drawfile:
+           draw_pic_destroy(pic->data.draw);
+           break;
+
+         case picture_sprite:
+           sprite_pic_destroy(pic->data.sprite);
+           break;
+
+         case picture_jpeg:
+           jpeg_pic_destroy(pic->data.jpeg);
+           break;
+
+         default:
+           assert(NeverReachHere);
+       }
+      memory_free(pic);
+    }
+ }
+
+
+
+void picture_draw(const picture *pic, int origin_x, int origin_y, unsigned scale_percent, const os_box *clip)
+ { assert(pic != NULL);
+
+   switch(pic->type)
+    { case picture_drawfile:
+        draw_pic_draw(pic->data.draw, origin_x, origin_y, scale_percent, clip);
+        break;
+
+     case picture_sprite:
+        sprite_pic_draw(pic->data.sprite, origin_x, origin_y, scale_percent, clip);
+        break;
+
+      case picture_jpeg:
+        jpeg_pic_draw(pic->data.jpeg, origin_x, origin_y, scale_percent, clip);
+        break;
+
+      default:
+        assert(NeverReachHere);
+    }
+ }
+
+
+
+void picture_size(const picture *pic, unsigned *width, unsigned *height)
+ { assert(pic != NULL);
+   assert(width != NULL);
+   assert(height != NULL);
+
+   switch(pic->type)
+    { case picture_drawfile:
+        draw_pic_size(pic->data.draw, width, height);
+        break;
+
+      case picture_sprite:
+        sprite_pic_size(pic->data.sprite, width, height);
+        break;
+
+      case picture_jpeg:
+        jpeg_pic_size(pic->data.jpeg, width, height);
+        break;
+
+      default:
+        assert(NeverReachHere);
+    }
+ }
+
+
+
+
+unsigned picture_suggested_scale(const picture *pic)
+ { assert(pic != NULL);
+
+   if(pic->type == picture_jpeg)
+    { return jpeg_pic_suggested_scale(pic->data.jpeg);
+    }
+   return 100;
+ }

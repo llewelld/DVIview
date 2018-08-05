@@ -1,0 +1,29 @@
+/**** vprint_dbx.h ****/
+/* Printing dialogue box for vprint
+ * (c) Paul Field
+ *
+ * v1.00 - 1/5/1996  (separated from vprint system)
+ */
+
+
+/* To use the vprint dialogue box you must copy the Print window into your Res file. You can
+ * then attach it to menus, keyboard short-cuts or whatever. The print dialogue will use the
+ * client handle of its ancestor object as the document handle for vprint. If there is
+ * no ancestor object, the client handle of the parent object is used.
+ */
+
+
+#include "vp_choices.h"
+#include "print_doc.h"
+
+
+typedef struct vprint_choice_store_str
+ { const vprint_choices* (*choices)(void);
+   void (*set_choices)(const vprint_choices*);
+   void (*save)(void);  /* may be NULL */
+ }vprint_choice_store;
+
+
+void vprint_dbx_init(print_doc*, const vprint_choice_store*);
+ /* Initialise the Print dialogue box and the vprint system.
+  */

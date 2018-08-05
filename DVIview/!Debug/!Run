@@ -1,0 +1,3 @@
+RMEnsure DDEUtils 0 System:modules.ddeutils
+Prefix <Obey$Dir>
+Makatic.Medium @ CCExtra="-DPRINT_VERBOSE" ExtraLibs="ToolLib:o.ToolLibDbg"

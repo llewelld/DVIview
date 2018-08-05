@@ -1,0 +1,43 @@
+/*** nev_support.c ***/
+/* Support for the nevent routines
+ * (c) Paul Field
+ */
+
+
+#include "nev_support.h"
+
+#include <assert.h>
+
+
+wimp_poll_flags nevent_support_mask  = 0;
+
+
+
+enum { dispatcher_limit = 3 };
+
+static nevent_support_dispatcher dispatchers[dispatcher_limit];
+static unsigned                  num_dispatchers;
+
+
+
+
+void nevent_support_register_dispatcher(nevent_support_dispatcher d)
+ { assert(d != NULL);
+   assert(num_dispatchers < dispatcher_limit);
+
+   dispatchers[num_dispatchers++] = d;
+ }
+
+
+
+
+void nevent_support_dispatch(wimp_event_no event_num, wimp_block* event_block, toolbox_block* id_block)
+ { unsigned dispatcher_idx;
+
+   for (dispatcher_idx = 0; dispatcher_idx < num_dispatchers; dispatcher_idx++)
+    { if (dispatchers[dispatcher_idx](event_num, event_block, id_block))
+       { /* Dispatcher handled event, so we're finished */
+         return;
+       }
+    }
+ }

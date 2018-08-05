@@ -1,0 +1,141 @@
+/** font_table.c **/
+/* loads and manages the font table from a dvi or vf file
+ * (including loading tfm files)
+ * (c) Paul Field 1995
+ */
+
+#include "font_table.h"
+
+#include <assert.h>
+#include <stdio.h>
+
+#include "allocate.h"
+#include "exception.h"
+#include "list.h"
+
+
+struct font_table_str
+ { list*     font_list;   /* List of all fonts in the font table */
+   tex_font* first_font;  /* Pointer to the 'first' font */
+ };
+
+
+
+font_table* font_table_load(byte_stream* stream, double dvi_to_1e7_metres)
+ { font_table* ft;
+
+
+   ft = memory_allocate(sizeof(struct font_table_str));
+   ft->font_list  = NULL;
+   ft->first_font = NULL;
+
+   try
+    { tex_font*   tfont;
+      command     c;
+      unsigned    command_pos;
+
+      ft->font_list = list_create();
+
+      do
+       { command_pos = byte_stream_get_position(stream);
+         dviops_read_command(stream, &c);
+         if (c.code == command_fnt_def)
+          { tfont = tex_font_construct(&c.parameters.font_def, dvi_to_1e7_metres, byte_stream_name(stream));
+            list_cons(ft->font_list, tfont);
+
+            if (ft->first_font == NULL)
+             { ft->first_font = tfont;
+             }
+          }
+         dviops_command_finished(&c);
+       }
+      while (c.code == command_fnt_def || c.code == command_nop);
+
+      /* Set position so that the last command (which isn't part of the font table)
+       * can be re-read by the function caller
+       */
+      byte_stream_set_position(stream, command_pos);
+    }
+   catch
+    { font_table_destruct(ft);
+      throw();
+    }
+   catch_end
+
+   return ft;
+ }
+
+
+
+
+void font_table_destruct(font_table* ft)
+ { if (ft != NULL)
+    { if (ft->font_list != NULL)
+       { while (!list_is_empty(ft->font_list))
+          { tex_font* tfont;
+
+            tfont = list_remove_head(ft->font_list);
+            tex_font_destruct(tfont);
+          }
+         list_destroy(ft->font_list);
+       }
+      memory_free(ft);
+    }
+ }
+
+
+
+
+bool font_table_get_font(const font_table* ft, int font_no, const tex_font** tfont)
+ { list_ptr ptr;
+
+   assert(ft);
+   assert(tfont);
+
+   for (ptr = list_ptr_head(ft->font_list); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+    { *tfont = list_ptr_element(ptr);
+      if (tex_font_number(*tfont) == font_no)
+       { return TRUE;
+       }
+    }
+   return FALSE;
+ }
+
+
+
+
+const tex_font* font_table_first_font(const font_table* ft)
+ { assert(ft != NULL);
+
+   return ft->first_font;
+ }
+
+
+
+
+void font_table_add_fonts_to_set(const font_table* ft, font_set* fonts)
+ { list_ptr ptr;
+
+   assert(ft != NULL);
+
+   for (ptr = list_ptr_head(ft->font_list); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+    { tex_font_add_render_fonts_to_set(list_ptr_element(ptr), fonts);
+    }
+ }
+
+
+
+
+#ifndef NDEBUG
+void font_table_debug_output(const font_table* ft)
+ { list_ptr ptr;
+
+   assert(ft);
+   fputs("Font Table\n----------\n",stderr);
+
+   for (ptr = list_ptr_head(ft->font_list); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+    { fputs("***\n", stderr);
+      tex_font_debug_output(list_ptr_element(ptr));
+    }
+ }
+#endif

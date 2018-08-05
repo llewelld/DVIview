@@ -1,0 +1,32 @@
+/*** nev_support.h ***/
+/* Support for the nevent routines
+ * (c) Paul Field
+ * v1.00 - 25/5/1996
+ */
+
+
+#ifndef toolbox_H
+#include "toolbox.h"
+#endif
+
+
+/* Mask used for Wimp Poll. Provided in nevent_support so that
+ * nevent_wimp can pass mask details to nevent without nevent
+ * being dependant on nevent_wimp
+ */
+extern wimp_poll_flags nevent_support_mask;
+
+
+typedef bool (*nevent_support_dispatcher)(wimp_event_no event_num, wimp_block* event_block, toolbox_block* id_block);
+
+
+void nevent_support_register_dispatcher(nevent_support_dispatcher d);
+ /* Post: dispatchers = d : old_dispatchers
+  *
+  * Registers a dispatcher
+  */
+
+
+void nevent_support_dispatch(wimp_event_no event_num, wimp_block* event_block, toolbox_block* id_block);
+ /* Calls each dispatcher in dispatchers (starting from the head) until one returns TRUE.
+  */

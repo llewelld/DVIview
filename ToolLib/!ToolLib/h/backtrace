@@ -1,0 +1,11 @@
+/*** backtrace.h ***/
+/* Generate a stack backtrace
+ * (c) Paul Field 1995
+ * Based closely on code by Tom Hughes
+ * v1.00 - 30/9/1995
+ */
+
+
+void backtrace(void);
+ /* Generates a stack backtrace on stderr
+  */

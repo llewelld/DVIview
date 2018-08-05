@@ -1,0 +1,39 @@
+/*** draw_pic.h ***/
+/* Routines for loading and displaying a Draw file
+ * (c) Paul Field 1995
+ * v1.00 - 24/11/95
+ */
+
+#ifndef os_H
+#include "os.h"
+#endif
+
+
+/* Opaque type */
+typedef struct draw_pic_str draw_pic;
+
+
+draw_pic *draw_pic_create(const char *file_name);
+ /* Pre: file_name is a Draw file
+  * Exceptions: exception_NO_MEMORY, os (file errors)
+  * Creates a draw_pic from the file 'file_name' and returns it
+  */
+
+void draw_pic_destroy(draw_pic *pic);
+ /* Frees the memory associated with 'pic'
+  */
+
+void draw_pic_draw(const draw_pic *pic, int origin_x, int origin_y, unsigned scale_percent, const os_box *clip);
+ /* Pre: pic != NULL
+  *      We're drawing in the current Wimp mode
+  * Draws the draw_pic with it's bottom left corner at (origin_x, origin_y)
+  * scaled by 'scale_percent'%
+  * 'clip' should be the current graphics window
+  */
+
+void draw_pic_size(const draw_pic *pic, unsigned *width, unsigned *height);
+ /* Pre: pic != NULL
+  *      width != NULL
+  *      height != NULL
+  * Returns the width and height of the draw_pic in OS units
+  */

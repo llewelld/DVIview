@@ -1,0 +1,191 @@
+/*** Text ***/
+/* A demonstration of Toolbox programming using OSLib
+ * (c) Paul Field
+ */
+
+/* Notes:
+ *
+ * OSLib refers to toolbox events as 'actions' and, for consistancy, we follow
+ * this convention.
+ *
+ * The NOT_USED(var) macro is used to supress a compiler warnings about 'var'
+ * being declared but not being used. This warning occurs when the Acorn compiler
+ * features "ah" are enabled. You should activate these features because they
+ * enable useful warnings which can indicate bugs in your program.
+ */
+
+#include <assert.h>
+#include <stdio.h>
+
+#include "colourtrans.h"
+#include "window.h"
+
+#include "applicatio.h"
+#include "exception.h"
+#include "nev_wimp.h"
+#include "text_plot.h"
+
+
+/* Width of the viewer's extent in OS units */
+static int viewer_width;
+
+
+
+static void rectangle_fill(int x, int y, unsigned width, unsigned height)
+ { os_plot(os_MOVE_TO, x, y);
+   os_plot(os_PLOT_RECTANGLE + os_PLOT_BY, width, height);
+ }
+
+
+
+
+static void test_width(const char* s, int x, int y)
+ { int width;
+
+   width = text_plot_width(s);
+   text_plot(s, x, y);
+   text_plot("*", x+width, y);
+ }
+
+
+
+
+static void write_message(int x, int y)
+ { enum
+    { spacing = 4,     /* spacing between lines */
+      line_height = wimp_CHAR_YSIZE + spacing
+    };
+
+   /* (x,y) is top left of window */
+
+   /* Move 'y' to position of first line */
+   y -= line_height;
+
+   text_plot_set_colours(os_COLOUR_BLACK, os_COLOUR_VERY_LIGHT_GREY);
+   text_plot("This is a test of ToolLib's text_plot facilities", x, y);
+
+   y -= line_height*2;
+
+   colourtrans_set_gcol(os_COLOUR_BLACK, colourtrans_SET_FG, os_ACTION_OVERWRITE, NULL);
+   rectangle_fill(x, y - text_plot_baseline_adjustment - spacing/2, viewer_width, line_height);
+
+   text_plot_set_colours(os_COLOUR_WHITE, os_COLOUR_BLACK);
+   text_plot("Let's try white text on a black background", x, y);
+
+
+   y -= line_height*2;
+
+   text_plot_set_colours(os_COLOUR_BLACK, os_COLOUR_VERY_LIGHT_GREY);
+   text_plot("Let's test text_plot_width by placing '*' at the end of these pieces of text:", x, y);
+
+   y -= line_height;
+   test_width("Hello", x, y);
+
+   y -= line_height;
+   test_width("", x, y);
+
+   y -= line_height;
+   test_width("Here is a longer bit of text", x, y);
+
+
+   y -= line_height*2;
+   text_plot("Finally, right-justified text:", x, y);
+
+   y -= line_height;
+   text_plot_right_justified("Hello", x + viewer_width, y);
+
+   y -= line_height;
+   text_plot_right_justified("Hello again", x + viewer_width, y);
+ }
+
+
+
+static nevent_result viewer_redraw(wimp_event_no event_code, wimp_block *event, toolbox_block *id_block, void *handle)
+ { bool more;
+   int  origin_x;
+   int  origin_y;
+
+   assert(event_code == wimp_REDRAW_WINDOW_REQUEST);
+   NOT_USED(event_code);
+   NOT_USED(event);
+   NOT_USED(handle);
+
+   more = wimp_redraw_window(&event->redraw);
+
+   /* Calculate where the work area origin is on screen (or off screen) */
+   origin_x = event->redraw.box.x0 - event->redraw.xscroll;
+   origin_y = event->redraw.box.y1 - event->redraw.yscroll;
+
+   try
+    { while (more)
+       { write_message(origin_x, origin_y);
+         more = wimp_get_rectangle(&event->redraw);
+       }
+    }
+   catch
+    { /* If there's an error during redraw then we could run into an infinite loop
+       * if the error report window covers up the window and so causes another redraw and another error.
+       * To avoid this happening, we hide the window
+       */
+      toolbox_hide_object(0, id_block->this_obj);
+      throw();
+    }
+   catch_end
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static void text_initialise(int argc, char *argv[])
+ { toolbox_o viewer_id;
+   os_box    extent;
+
+   NOT_USED(argc);
+   NOT_USED(argv);
+
+#ifndef NDEBUG
+   /* Redirect error stream */
+   freopen("pipe:$.debug", "w", stderr);
+#endif
+
+   nevent_wimp_initialise();
+
+   viewer_id = toolbox_create_object(0, (toolbox_id)"Viewer");
+   nevent_wimp_register_handler(viewer_id, wimp_REDRAW_WINDOW_REQUEST, viewer_redraw, NULL);
+
+   window_get_extent(0, viewer_id, &extent);
+   assert(extent.x0 == 0);
+   assert(extent.y1 == 0);
+
+   viewer_width = extent.x1;
+ }
+
+
+
+
+/* Respond to all actions and messages */
+static const int toolbox_actions[] =
+ { 0
+ };
+
+
+#if 0
+/* no messages, so NULL is used in the this_application struture */
+static const int wimp_messages[] =
+ {
+ };
+#endif
+
+
+/* The variable which the application system required */
+application this_application =
+ { "<Text$Dir>",
+   310,
+   toolbox_actions,
+   NULL, /*wimp_messages,*/
+   3,
+   text_initialise,
+   NULL
+ };

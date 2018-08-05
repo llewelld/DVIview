@@ -1,0 +1,34 @@
+/**** font_set.c ****/
+/* Simple specialisation of a set to hold font names
+ * and an associated tag
+ * (c) Paul Field
+ */
+
+#include "font_set.h"
+
+#include <string.h>
+#include <ctype.h>
+
+
+
+static int font_info_compare(const void *vo1, const void *vo2)
+ { const font_info *o1 = vo1;
+   const font_info *o2 = vo2;
+   const char *s1 = o1->name;
+   const char *s2 = o2->name;
+
+   /* Case-insensitive version of strcmp() */
+   for (; tolower(*s1) == tolower(*s2); s1++, s2++)
+    { if (*s1 == '\0')
+       { return 0;
+       }
+    }
+   return *s1 - *s2;
+ }
+
+
+
+
+font_set *font_set_construct(void)
+ { return set_create(font_info_compare, NULL, sizeof(font_info));
+ }

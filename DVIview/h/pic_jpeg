@@ -1,0 +1,77 @@
+/**** pic_jpeg.h ****/
+/* Handles JPEG pictures
+ * (c) Paul Field 1996
+ */
+
+#ifndef os_H
+#include "os.h"
+#endif
+
+typedef struct jpeg_pic_str jpeg_pic;
+
+
+jpeg_pic* jpeg_pic_construct(const char* file_name);
+ /* Pre: file_name != NULL
+  *      file_name refers to a JPEG file
+  * Exceptions: exception_NO_MEMORY, os exceptions
+  * Creates a JPEG picture from the JPEG file 'file_name' and returns it
+  */
+
+
+void jpeg_pic_destruct(jpeg_pic *pic);
+ /* Frees the memory associated with 'pic' (pic may be NULL)
+  */
+
+
+void jpeg_pic_draw
+ ( const jpeg_pic* pic,
+   int               pic_origin_x,
+   int               pic_origin_y,
+   unsigned          scale_percent_x,
+   unsigned          scale_percent_y,
+   const os_box*     clip);
+ /* Pre: pic != NULL
+  *      clip != NULL
+  *      (pic_origin_x, pic_origin_y) is the screen position of the bottom left of the picture (in Draw units)
+  *      (scale_percent_x, scale_percent_y) is the magnification of the picture on each axis as a percentage
+  *      clip is the current graphics clipping rectangle (typically returned by the Wimp)
+  * Exceptions: os exceptions
+  * Draws the picture
+  */
+
+
+void jpeg_pic_size(const jpeg_pic* pic, unsigned* width, unsigned* height);
+ /* Pre: pic != NULL
+  *      width != NULL
+  *      height != NULL
+  * Returns the width and height of the jpeg_pic in Draw units
+  */
+
+
+void jpeg_pic_save
+ ( const jpeg_pic* pic,
+   int               pic_origin_x,
+   int               pic_origin_y,
+   unsigned          scale_percent_x,
+   unsigned          scale_percent_y
+ );
+ /* Pre: pic != NULL
+  *      (pic_origin_x, pic_origin_y) is the screen position of the bottom left of the picture (in Draw units)
+  *      (scale_percent_x, scale_percent_y) is the magnification of the picture on each axis as a percentage
+  * Exceptions: os exceptions
+  * Saves the diagram as a stream of draw objects using the save_buffer module
+  */
+
+
+unsigned jpeg_pic_estimate_save_size(const jpeg_pic* pic);
+ /* Pre: pic != NULL
+  *      Returns the approximate size of the output produced by jpeg_pic_save()
+  */
+
+
+
+#ifndef NDEBUG
+void jpeg_pic_debug_output(const jpeg_pic* pic);
+#else
+#define jpeg_pic_debug_output(p)
+#endif

@@ -1,0 +1,120 @@
+/*** print_doc.h ***/
+/* An abstract document that provides the facilities the printing system needs.
+ * (c) Paul Field 1996
+ * v1.00 - 2/5/1996
+ */
+
+#ifndef print_doc_h
+#define print_doc_h
+
+#include "bool.h"
+
+#include "print_declarer.h"
+
+
+typedef const char *(*print_doc_name_fn)(void* doc_handle);
+ /* Pre: doc_handle  != NULL
+  * Returns the name of the print job (e.g. the document filename)
+  */
+
+
+typedef unsigned (*print_doc_pages_fn)(void* doc_handle);
+ /* Pre: doc_handle  != NULL
+  * Returns the number of pages in the document
+  */
+
+
+typedef void (*print_doc_page_size_fn)(void* doc_handle, unsigned* page_width, unsigned* page_height);
+ /* Pre: doc_handle  != NULL
+  *      page_width  != NULL
+  *      page_height != NULL
+  * Sets 'page_height' and 'page_width' to the dimensions
+  * of the document's pages in millipoints.
+  */
+
+
+typedef void (*print_doc_declare_document_fonts_fn)(void* doc_handle, print_font_declarer* declarer);
+ /* Pre: doc_handle != NULL
+  * Calls declarer->declare_font() for all the fonts used in the document.
+  *
+  * This is an optional function provided to take advantage of a document's global font table
+  * if it has one.
+  */
+
+
+typedef void (*print_doc_declare_page_fonts_fn)(void* doc_handle, unsigned page_number, print_font_declarer* declarer);
+ /* Pre: doc_handle != NULL
+  *      0 <= page_number < pages(doc_handle)
+  * Calls declarer->declare_font() for all the fonts used in page page_number in the document.
+  *
+  * Notice that a page number is passed instead of a page_handle because, for some
+  * document management schemes, it may be possible to determine the fonts used without
+  * loading the page from disc.
+  */
+
+
+typedef void (*print_doc_declare_page_fn)(void* doc_handle, void* page_handle, print_rect_declarer* declarer);
+ /* Pre: doc_handle != NULL
+  *      page_handle is a value returned from the document's print_doc_get_page_handle_fn
+  *      declarer != NULL
+  * Calls declarer->declare_rectangle() and/or declarer->declare_rectangle_at() with rectangles that
+  * bound the material on the page.
+  *
+  * The id that you assign to rectangles given to declarer will be used when your print_doc_draw_page_fn is called.
+  *
+  * In the simplest case you'll just pass one rectangle (the bounding box for all the material on
+  * the page) to declarer->declare_rectangle().
+  * You might declare more than one rectangle if, for example, your page had a header, footer and main body.
+  * Generally, you'll probably use a single coordinate system for all objects on the page (i.e. they're
+  * all relative to the bottom left corner) and so you'll only need declarer->declare_rectangle().
+  * declarer->declare_rectangle_at() gives you the option of doing complicated things with coordinates.
+  */
+
+
+typedef void (*print_doc_draw_page_fn)(void* doc_handle, void* page_handle, unsigned id, const os_box* clip);
+ /* Pre: doc_handle != NULL
+  *      page_handle is a value returned from the document's print_doc_get_page_handle_fn
+  *      clip != NULL
+  * Render the 'clip' area on the page given. You should be able to share basically all of your
+  * screen redraw code with this function. It's wise to read the PRMs about output calls, but as general
+  * advice: don't use AND,OR,EOR,NOT plotting or ECFs, use colourtrans for setting all colours,
+  * try to avoid VDU sequences where alternatives exist (e.g. Font SWIs, the Draw module, Sprite SWIs).
+  * You must not report errors while in this function - throw them as exceptions and
+  * the printing system will report them for you.
+  */
+
+typedef void* (*print_doc_get_page_handle_fn)(void* doc_handle, unsigned page_number);
+ /* Pre: doc_handle != NULL
+  *      0 <= page_number < pages(doc_handle)
+  *
+  * Translates a page number into a handle. In programs that use complex document
+  * management this call should ensure that the application can render the requested page
+  * (e.g. you might load it from disc or allocate memory)
+  * Can throw an exception if the page handle was not successfully acquired
+  */
+
+typedef void (*print_doc_discard_page_handle_fn)(void* doc_handle, void* page_handle);
+ /* Pre: doc_handle != NULL
+  *      page_handle is a value returned from the document's print_doc_get_page_handle_fn
+  * Called when the print system has finished with the page for the time being
+  * (This call is intended for applications with complex document management so
+  * they can tidy up their data structures, free memory etc).
+  */
+
+
+
+typedef struct print_doc_str
+ { void* handle;
+
+   print_doc_name_fn                    name;
+   print_doc_pages_fn                   pages;
+   print_doc_page_size_fn               page_size;
+   print_doc_declare_document_fonts_fn  declare_doc_fonts;   /* May be NULL */
+   print_doc_declare_page_fonts_fn      declare_page_fonts;
+   print_doc_declare_page_fn            declare_page;
+   print_doc_draw_page_fn               draw_page;
+   print_doc_get_page_handle_fn         get_page;
+   print_doc_discard_page_handle_fn     discard_page;       /* May be NULL */
+ }print_doc;
+
+#endif

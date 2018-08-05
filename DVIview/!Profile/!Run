@@ -1,0 +1,2 @@
+Prefix <Obey$Dir>
+Makatic.Medium @ CCExtra="-DNDEBUG -DHierProf_PROFILE" ExtraLibs="ToolLib:o.ToolLibPrf HierProf:o.HP_T1"

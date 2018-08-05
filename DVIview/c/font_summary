@@ -1,0 +1,171 @@
+/**** font_summary.c ****/
+/* Maintains a list of font summaries
+ * (c) Paul Field
+ */
+
+#include "font_summary.h"
+
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "allocate.h"
+#include "ci_string.h"
+#include "exception.h"
+#include "list.h"
+#include "message.h"
+
+
+
+
+static list* summaries;
+
+typedef struct summary_str
+ { char*  font_name;
+   double width;
+ }summary;
+
+
+
+#ifndef NDEBUG
+static bool constructed = FALSE;
+#endif
+
+
+
+
+bool font_summary_width(const char* font_name, double* width)
+ { list_ptr lptr;
+
+   assert(constructed);
+   assert(font_name != NULL);
+   assert(width != NULL);
+
+   for (lptr = list_ptr_head(summaries); !list_ptr_past_the_end(lptr); list_ptr_inc(&lptr))
+    { summary* s;
+
+      s = list_ptr_element(lptr);
+      if (case_insensitive_strcmp(font_name, s->font_name) == 0)
+       { *width = s->width;
+         return TRUE;
+       }
+    }
+
+   return FALSE;
+ }
+
+
+
+
+void font_summary_update(void)
+ { assert(constructed);
+   throw_string("Not implemented");
+ }
+
+
+
+
+static void read_package_summary(const char* package_dir)
+ { char  summary_file_name[os_FILE_NAME_LIMIT];
+   FILE* summary_file;
+
+   if (os_FILE_NAME_LIMIT - strlen("Summary") <= strlen(package_dir))
+    { throw_string(message_lookup_and_substitute("PackageTooLong", package_dir, 0,0,0));
+    }
+
+   strcpy(summary_file_name, package_dir);
+   strcat(summary_file_name, "Summary");
+
+   summary_file = fopen(summary_file_name, "r");
+   if (summary_file)
+    { try
+       { char     buffer[80];
+
+         while(!feof(summary_file) && !ferror(summary_file))
+          { if (fgets(buffer, 80, summary_file) != NULL)
+             { char     font_name[80];
+               double   width;
+
+               if (sscanf(buffer, "%s%lf", font_name, &width) == 2)
+                { summary* s;
+
+                  s = list_alloc_element(sizeof(summary));
+                  s->font_name = NULL;
+                  list_cons(summaries, s);
+
+                  s->font_name = memory_allocate(strlen(font_name)+1);
+                  strcpy(s->font_name, font_name);
+                  s->width = width;
+                  if (s->width == 0.0)
+                   { s->width = 1.0;
+                   }
+                }
+             }
+          }
+       }
+      catch
+       { fclose(summary_file);
+         throw();
+       }
+      catch_end
+
+      fclose(summary_file);
+    }
+ }
+
+
+
+
+void font_summary_construct(void)
+ { char package_path[os_CLI_LIMIT];
+   char *path;
+
+   assert(!constructed);
+
+   summaries = list_create();
+
+#ifndef NDEBUG
+   constructed = TRUE;
+#endif
+
+   path = getenv("TeXFontsPackages$Path");
+   if (path != NULL)
+    { const char* package_dir;
+
+      strncpy(package_path, path, os_CLI_LIMIT-1);
+      package_path[os_CLI_LIMIT-1] = '\0';
+
+      package_dir = strtok(package_path, ",");
+      while(package_dir != NULL)
+       { read_package_summary(package_dir);
+         package_dir = strtok(NULL, ",");
+       }
+    }
+ }
+
+
+
+
+void font_summary_destruct(void)
+ { assert(constructed);
+
+   /* Only destruct when MemCheck is in operation.
+    * Normally we rely on the OS to tidy up automatically (it's more efficient)
+    */
+#ifdef MemCheck_MEMCHECK
+   while(!list_is_empty(summaries))
+    { summary* s;
+
+      s = list_remove_head(summaries);
+      memory_free(s->font_name);
+      list_free_element(s);
+    }
+
+   list_destroy(summaries);
+#endif
+
+#ifndef NDEBUG
+   constructed = FALSE;
+#endif
+ }

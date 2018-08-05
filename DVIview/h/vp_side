@@ -1,0 +1,28 @@
+/*** vp_side.h ***/
+/* A representation of one side of a piece of paper
+ * with various pages positioned on it.
+ * (c) Paul Field 1996
+ * v1.00 - 2/5/1996
+ */
+
+#include "print_side.h"
+#include "print_doc.h"
+#include "vp_area.h"
+
+void vp_side_construct
+ ( const print_doc*  document,
+   unsigned          num_abstract_pages,
+   const unsigned    abstract_page_number[],
+   vp_area*          area[]
+ );
+ /* Pre: document != NULL
+  *      There are num_abstract_pages entries in abstract_page_number and area
+  * Creates a side where, if it exists, document's page abstract_page_number[i]+1
+  * is placed in area[i].
+  * N.B. the +1 is because abstract page numbers run from 0 whereas document pages run from 1
+  */
+
+
+extern print_side vp_side;
+ /* Access to the side's declare, draw and destruct functions
+  */

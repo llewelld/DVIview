@@ -1,0 +1,11 @@
+/*** treeparams.h ***/
+/* A (shared) window containing the tree parameters
+ * (c) Paul Field 1995
+ * v1.00 - 22/11/1995
+ */
+
+
+void tree_params_initialise(void);
+ /* Exceptions: os
+  * Sets up event handlers etc. necessary for the tree parameter window
+  */

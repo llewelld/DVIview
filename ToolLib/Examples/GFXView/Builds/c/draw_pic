@@ -1,0 +1,100 @@
+/*** draw_pic.c ***/
+/* Routines for loading and displaying a Draw file
+ * (c) Paul Field 1995
+ */
+
+
+#include "draw_pic.h"
+
+#include <assert.h>
+#include "drawfile.h"
+#include "osfile.h"
+
+#include "allocate.h"
+#include "exception.h"
+#include "shifting.h"
+
+
+
+struct draw_pic_str
+ { drawfile_diagram *draw;
+ };
+
+
+
+draw_pic *draw_pic_create(const char *file_name)
+ { int      size;
+   bits     file_type;
+   draw_pic *pic;
+
+   osfile_read_stamped_no_path(file_name, NULL, NULL, &size, NULL, &file_type);
+   assert(file_type == osfile_TYPE_DRAW);
+
+   pic = memory_allocate(sizeof(*pic));
+   pic->draw = NULL;   /* It's OK to 'free' a NULL */
+
+   try
+    { shifting_allocate((shifting_ptr)&pic->draw, size);
+      osfile_load_stamped_no_path(file_name, (byte *)pic->draw, NULL, NULL, NULL, NULL);
+    }
+   catch
+    { draw_pic_destroy(pic);
+      throw();
+    }
+   catch_end
+
+   return pic;
+ }
+
+
+
+void draw_pic_destroy(draw_pic *pic)
+ { if (pic != NULL)
+    { shifting_free((shifting_ptr)&pic->draw);
+      memory_free(pic);
+    }
+ }
+
+
+
+void draw_pic_draw(const draw_pic *pic, int pic_origin_x, int pic_origin_y, unsigned scale_percent, const os_box *clip)
+ { os_trfm trfm;
+   int     fix_scale;
+   int     zero_x;
+   int     zero_y;
+
+   assert(pic != NULL);
+
+   /* Calculate fixed-point scale factors */
+   fix_scale = (scale_percent << 16)/100;
+
+   /* Convert the origin coordinate from OS to draw units */
+   pic_origin_x *= draw_OS_UNIT;
+   pic_origin_y *= draw_OS_UNIT;
+
+
+   /* pic_origin is the screen position at which we want the bottom left of the
+    * draw diagram to appear at. To draw the diagram we need to calculate the screen position
+    * at which draw coordinate (0,0) should appear.
+    * If the bottom left of the diagram is (x,y) then we simply move by (-x,-y) to get to (0,0)
+    * so, to calculate the screen position of (0,0) we simply move by (-x,-y) from pic_origin.
+    */
+   zero_x = pic_origin_x - (pic->draw->bbox.x0 * scale_percent)/100;
+   zero_y = pic_origin_y - (pic->draw->bbox.y0 * scale_percent)/100;
+
+
+   /* Create transformation matrix to implement the scaling and translation required */
+   trfm.entries[0][0] = fix_scale;  trfm.entries[0][1] = 0;
+   trfm.entries[1][0] = 0;          trfm.entries[1][1] = fix_scale;
+   trfm.entries[2][0] = zero_x;     trfm.entries[2][1] = zero_y;
+
+   drawfile_render(0, pic->draw, shifting_size((shifting_ptr)&pic->draw), &trfm, clip, 0);
+ }
+
+
+
+void draw_pic_size(const draw_pic *pic, unsigned *width, unsigned *height)
+ { /* draw_OS_UNIT-1 is added so that the division rounds up */
+   *width  = ((pic->draw->bbox.x1 - pic->draw->bbox.x0) + draw_OS_UNIT-1)/draw_OS_UNIT;
+   *height = ((pic->draw->bbox.y1 - pic->draw->bbox.y0) + draw_OS_UNIT-1)/draw_OS_UNIT;
+ }

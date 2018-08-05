@@ -1,0 +1,349 @@
+/*** list.c ***/
+/* Abstract data type :
+ *   Simple list (singly-linked)
+ * (c) Paul Field
+ */
+
+#include "list.h"
+
+#include <stdlib.h>
+#include <assert.h>
+
+/* Each element of the list has a 'list_element' secretly attached
+ * to it by 'list_alloc_element'. This provides links forward along
+ * the list.
+ */
+typedef struct list_element_str list_element;
+struct list_element_str
+ { list_element *next;    /* A link to the next element in the list (or NULL) */
+#ifndef NDEBUG
+   void *list_allocated;  /* Used by debugging code to flag that this was allocated by list_alloc_element */
+#endif
+ };
+
+
+/* Macros that convert between 'elements', the object the outside world sees, and
+ * 'list_elements' (see above) which are hidden except inside this module
+ */
+#define list_TO_LIST_ELEMENT(e)  ((list_element *)((char *)(e)  - sizeof(list_element)))
+#define list_TO_ELEMENT(le)      ((void *)((char *)(le) + sizeof(list_element)))
+
+
+/* A list is a pointer to a list_str */
+struct list_str
+ { list_element *head;      /* The element at the head of the list or NULL for an empty list */
+   unsigned length;         /* The length of the list */
+   unsigned cache_n;        /* Either cache_n == 0 or element cache_n of list == chache_element */
+   list_element *cache_element;
+#ifndef NDEBUG
+   const void *list_active; /* Used by debugging code to flag that this list has not been destroyed */
+#endif
+ };
+
+
+#ifdef NDEBUG
+/* No debugging */
+#define ldbg_stats()
+#define ldbg_note_alloc(e)
+#define ldbg_note_dealloc(e)
+#define ldbg_note_list_created(l)
+#define ldbg_note_list_destroyed(l)
+#define ldbg_unlist_element(e)
+#define ldbg_error(f,e)
+#define ldbg_check_element_unlisted(e,f)
+#define ldbg_check_list_is_valid(l,f)
+
+#else
+#include <stdio.h>
+  static list_element  magic;                 /* A magic value for list_element pointers */
+  static int           list_alloc_magic;      /* A magic value to indicate list_alloc-ed block */
+  static int           list_active_magic;     /* A magic value to indicate a list is active (i.e. not destroyed) */
+  static int           list_not_active_magic; /* A magic value to indicate a list is not active (i.e. has been destroyed) */
+  static unsigned allocates = 0;         /* Number of list_alloc_element() - number list_free_element() */
+  static unsigned lists = 0;             /* Number of list_create() - number of list_destroy() */
+  static bool exit_registered = FALSE;   /* TRUE once ldbg_stats has been registered with atexit() */
+
+  static void ldbg_stats(void);
+   /* If there are lists or list elements still allocated, this outputs the number of each
+    */
+
+  static void ldbg_note_alloc(list_element *element);
+   /* Notes that a list element has been allocated. (Also installs ldbg_stats
+    * to be called when the program exits, if it hasn't been installed already)
+    */
+
+  static void ldbg_note_dealloc(list_element *element);
+   /* Notes that a list element is about to be deallocated
+    */
+
+  static void ldbg_note_list_created(list *l);
+   /* Notes that a list has been created. (Also installs qbg_stats
+    * to be called when the program exits, if it hasn't been installed already)
+    */
+
+  static void ldbg_note_list_destroyed(list *l);
+   /* Notes that a list is about to be destroyed
+    */
+
+  static void ldbg_unlist_element(list_element *element);
+   /* Pre: Element has been removed from the list
+    * Alters element so that it can be identified as not being in a list
+    */
+
+  static void ldbg_error(const char *function, const char *error);
+   /* Reports an error that occured in function and then aborts
+    */
+
+  static void ldbg_check_element_unlisted(const list_element *element, const char *function);
+   /* Checks that element can be added to a list (i.e. it was allocated by list_element_alloc
+    * as in not currently in a list). Generates an error and aborts if it is not.
+    */
+
+  static void ldbg_check_list_is_valid(const list *l, const char *function);
+   /* Checks that q is a valid list.
+    * If there is some problem with it and error is generated and abort() is called
+    */
+
+
+  static void ldbg_stats(void)
+   { if (lists != 0 || allocates != 0)
+      { fprintf(stderr, "Number of lists not destroyed = %u\nNumber of list elements not freed = %u\n", lists, allocates);
+      }
+   }
+
+  static void ldbg_note_alloc(list_element *element)
+   { if (!exit_registered)
+      { exit_registered = TRUE;
+        atexit(ldbg_stats);
+      }
+     element->list_allocated = &list_alloc_magic;
+     allocates++;
+   }
+
+  static void ldbg_note_dealloc(list_element *element)
+   { assert(allocates > 0);
+     allocates--;
+     /* Erase magic number in case it crops up in the 'right' place in a malloced block */
+     element->list_allocated = NULL;
+   }
+
+  static void ldbg_note_list_created(list *l)
+   { if (!exit_registered)
+      { exit_registered = TRUE;
+        atexit(ldbg_stats);
+      }
+     lists++;
+     l->list_active = &list_active_magic;
+   }
+
+  static void ldbg_note_list_destroyed(list *l)
+   { assert(lists > 0);
+     lists--;
+     l->list_active = &list_not_active_magic;
+   }
+
+  static void ldbg_unlist_element(list_element *element)
+   { assert(element != NULL);
+     element->next = &magic;
+   }
+
+  static void ldbg_error(const char *function, const char *error)
+   { assert(function != NULL);
+     assert(error != NULL);
+
+     fputs(function, stderr);
+     fputs(": ",stderr);
+     fputs(error, stderr);
+     fputc('\n', stderr);
+     abort();
+   }
+
+  static void ldbg_check_element_unlisted(const list_element *element, const char *function)
+   { assert(element != NULL);
+     if (element->list_allocated != &list_alloc_magic)
+      { ldbg_error(function, "Element was not allocated using list_alloc_element");
+      }
+     if (element->next != &magic)
+      { ldbg_error(function, "Element is still in a list");
+      }
+   }
+
+  static void ldbg_check_list_is_valid(const list *l, const char *function)
+   { list_element *lelement;
+     unsigned n;
+
+     if (l == NULL)
+      { ldbg_error(function, "NULL has been passed as list parameter");
+      }
+     if (l->list_active == &list_not_active_magic)
+      { ldbg_error(function, "The list has been destroyed - you can no longer use it");
+      }
+     if (l->list_active != &list_active_magic)
+      { ldbg_error(function, "The list parameter has not been created or is corrupt (or may have been destroyed)");
+      }
+
+     if (l->head == (list_element *)l)
+      { ldbg_error(function, "The list references itself");
+      }
+
+     for (lelement = l->head, n=1; lelement != NULL; lelement = lelement->next, n++)
+      { if (lelement == &magic)
+         { ldbg_error(function, "'Magic' pointer appears in list");
+         }
+        if (n == l->cache_n && l->cache_element != lelement)
+         { ldbg_error(function, "List element cache contains the wrong element");
+         }
+      }
+     if (l->length != n-1)
+      { ldbg_error(function, "Cached list length is wrong");
+      }
+     if (l->cache_n > l->length)
+      { ldbg_error(function, "Cached element number is beyond the end of the list");
+      }
+   }
+
+#endif
+
+
+
+void *list_alloc_element(size_t size)
+ { list_element *lelement;
+
+   lelement = malloc(size + sizeof(list_element));
+   if (lelement == NULL)
+    { return NULL;
+    }
+   ldbg_unlist_element(lelement);
+   ldbg_note_alloc(lelement);
+   return list_TO_ELEMENT(lelement);
+ }
+
+void list_free_element(void *element)
+ { if (element != NULL)
+    { list_element *lelement = list_TO_LIST_ELEMENT(element);
+      ldbg_check_element_unlisted(lelement, "list_free_element");
+      ldbg_note_dealloc(lelement);
+      free(lelement);
+    }
+ }
+
+
+
+bool list_create(list **l)
+ { assert(l != NULL);
+   /* We should check that *l is not already a list but we can't use
+    * (*l)->list_active because l could point anywhere (not
+    * necessarily to valid memory) so following it is dangerous.
+    * We could keep a list of all allocated list but this is not
+    * really worth the trouble - misusing list_create
+    * should cause problems either when it is destroyed twice (the
+    * second time it is not valid) or when the program ends
+    * (when a 'still allocated' list will be reported)
+    */
+
+   *l = malloc(sizeof(struct list_str));
+   if (*l != NULL)
+    { (*l)->head = NULL;
+      (*l)->length = 0;
+      (*l)->cache_n = 0;
+      ldbg_note_list_created(*l);
+      return TRUE;
+    }
+   return FALSE;
+ }
+
+
+void list_destroy(list *l)
+ { ldbg_check_list_is_valid(l, "list_destroy");
+
+   while (!list_is_empty(l))
+    { list_free_element(list_remove_head(l));
+    }
+   ldbg_note_list_destroyed(l);
+   free(l);
+ }
+
+
+bool list_is_empty(const list *l)
+ { ldbg_check_list_is_valid(l, "list_is_empty");
+
+   return l->head == NULL;
+ }
+
+
+void list_cons(list *l, const void *element)
+ { list_element *lelement;
+
+   assert(element != NULL);
+   ldbg_check_list_is_valid(l, "list_cons");
+   lelement = list_TO_LIST_ELEMENT(element);
+   ldbg_check_element_unlisted(lelement, "list_cons");
+
+   lelement->next = l->head;
+   l->head = lelement;
+   l->length++;
+
+   /* Update list cache */
+   if (l->cache_n !=0)
+    { l->cache_n++;
+    }
+
+   ldbg_check_list_is_valid(l, "list_cons (post)");
+ }
+
+
+void *list_remove_head(list *l)
+ { list_element *lelement;
+
+   ldbg_check_list_is_valid(l, "list_remove_head");
+   assert(!list_is_empty(l));
+
+   lelement = l->head;
+   l->head  = lelement->next;
+   l->length--;
+   if (l->cache_n != 0)
+    { l->cache_n--;
+    }
+
+   ldbg_unlist_element(lelement);
+   ldbg_check_list_is_valid(l, "list_remove_head (post)");
+   return list_TO_ELEMENT(lelement);
+ }
+
+unsigned list_length(const list *l)
+ { ldbg_check_list_is_valid(l, "list_length");
+   return l->length;
+ }
+
+void *list_nth_element(const list *l, unsigned n)
+ { unsigned i;
+   list_element *lelement;
+   list *non_const_l;
+
+   ldbg_check_list_is_valid(l, "list_nth_element");
+   assert(list_length(l) >= n);
+   assert(n > 0);
+
+   if (l->cache_n !=0 && n >= l->cache_n)
+    { i = l->cache_n;
+      lelement = l->cache_element;
+    }
+   else
+    { i = 1;
+      lelement = l->head;
+    }
+
+   while(i < n)
+    { i++;
+      lelement = lelement->next;
+    }
+
+   /** We cast away the const because we are changing cached values in the list **/
+   /** - the 'value' of the list is unchanged so it is 'const' to the outside world **/
+   non_const_l = (list *)l;
+   non_const_l->cache_n = n;
+   non_const_l->cache_element = lelement;
+
+   ldbg_check_list_is_valid(l, "list_nth_element (post)");
+   return list_TO_ELEMENT(lelement);
+ }

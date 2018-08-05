@@ -1,0 +1,21 @@
+/* A boolean 'type' */
+
+#ifndef _bool
+#define _bool
+#include "types.h"
+
+/* If you don't have OSLib then remove the line above
+ * and replace it with the following
+ */
+
+#if 0
+typedef int bool;
+#ifndef FALSE
+#define FALSE                                   ((bool) 0)
+#endif
+#ifndef TRUE
+#define TRUE                                    ((bool) 1)
+#endif
+#endif
+
+#endif

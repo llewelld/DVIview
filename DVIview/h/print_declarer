@@ -1,0 +1,57 @@
+/*** print_declarer.h ***/
+/* Objects for declaring things to the printer system
+ * (c) Paul Field 1996
+ * v1.00 - 7/5/1996
+ */
+
+#ifndef print_declarer_h
+#define print_declarer_h
+
+#ifndef os_H
+#include "os.h"
+#endif
+
+typedef struct print_rect_declarer_str
+ { void (*declare_rectangle)(const os_box* rect, os_colour background, unsigned id);
+   /* Pre: rect != NULL
+    * Specifies an area of your page that contain material to print.
+    * 'rect' contains coordinates in OS units.
+    * 'id' may be used to identify the rectangle.
+    * This call assumes that the bottom left of your page is at (0,0).
+    */
+
+   void (*declare_rectangle_at)(const os_box* rect, int x, int y, os_colour background, unsigned id);
+    /* As declare_rectangle() except that you provide the position of the rectangle (x,y) in millipoints.
+     * This is useful if your rectangle has its own coordinate system e.g. you store information in your page's header
+     * relative to the bottom left of the header rather than relative to the bottom of the page. In this case
+     * your 'rect' might be (0,0,1000,200) (i.e. bottom left coordinate is 0,0).
+     */
+
+    void (*set_error_margin)(unsigned margin);
+     /* To avoid rounding errors in the printer manager, a margin is added to any rectangles you specify.
+      * By default, this is 2 (as recommended by the PRMs (p3-624)), but you can alter it using this call
+      * if you want to.
+      * The error margin applies to rectangles declared after this call is made (and only until the
+      * next call of this function).
+      */
+ }print_rect_declarer;
+
+
+
+/* Flags for use when declaring a font */
+#define print_font_dont_download 1
+#define print_font_kern 2
+
+typedef struct print_font_declarer_str
+ { void (*declare_font)(const char* font_name, unsigned flags);
+   /* Pre: font_name != NULL
+    * This is similar to the SWI PDriver_DeclareFont except:
+    *   there is no support for font handles to be passed (this may be added in a future release)
+    *   fonts do not have to be distinct
+    */
+ }print_font_declarer;
+
+
+
+
+#endif

@@ -1,0 +1,211 @@
+/** real_font.c **/
+/* Data structure for 'real' (i.e. non-virtual) fonts
+ * (c) Paul Field 1996
+ */
+
+#include "real_font.h"
+
+#include <stdio.h>
+#include <assert.h>
+#include <string.h>
+
+#include "allocate.h"
+#include "ci_string.h"
+#include "error.h"
+#include "exception.h"
+#include "log.h"
+#include "message.h"
+
+#include "substitute.h"
+#include "tfm.h"
+
+
+
+struct real_font_str
+ { double   x_scale;
+   double   y_scale;
+   unsigned x_size;         /* Font size in 1/640ths point */
+   unsigned y_size;
+   char*    render_name;    /* Name of system font used to render TeX font */
+   tfm*     metrics;
+   bool     uses_encoding;  /* TRUE if characters must be re-mapped for system fonts */
+ };
+
+
+
+#define PointsIn10e_7Metre 2.8452755e-4
+
+
+real_font* real_font_construct
+ ( const char* font_name,
+   int         size,
+   double      dvi_to_1e7_metres,
+   unsigned    checksum,
+   const char* error_source
+ )
+ { real_font* font;
+
+   assert(font_name != NULL);
+   assert(error_source != NULL);
+
+   font = memory_allocate(sizeof(struct real_font_str));
+   font->render_name = NULL;
+   font->metrics   = NULL;
+
+   try
+    { const char* tfm_font_name;
+      const char* render_font_name;
+      double      aspect_ratio;
+
+      substitute(error_source, font_name, &tfm_font_name, &render_font_name, &aspect_ratio);
+
+      font->render_name = memory_allocate(strlen(render_font_name) + 1);
+      strcpy(font->render_name, render_font_name);
+
+      /* The 1<<20 is to account for the fixpoint format used to store tfm distances */
+      font->y_scale = (double)size / (double)(1<<20);
+      font->y_size  = (int)(size * dvi_to_1e7_metres * PointsIn10e_7Metre * 640);
+
+      font->x_scale = font->y_scale * aspect_ratio;
+      font->x_size  = (int)(font->y_size * aspect_ratio);
+
+      font->metrics = tfm_read(tfm_font_name);
+
+      font->uses_encoding = (strncmp(substitute_tex_font_prefix, render_font_name, strlen(substitute_tex_font_prefix)) == 0);
+
+      /* Check checksums (but only if the font wasn't substituted) */
+      if (case_insensitive_strcmp(font_name, tfm_font_name) == 0)
+       { if (!tfm_checksum_matches(font->metrics, checksum))
+          { log_add_message(error_source, message_lookup_and_substitute("Checksums", font_name, NULL, NULL, NULL));
+          }
+       }
+    }
+   catch
+    { real_font_destruct(font);
+      throw();
+    }
+   catch_end
+
+   return font;
+ }
+
+
+
+
+void real_font_destruct(real_font* font)
+ { if (font != NULL)
+    { memory_free(font->render_name);
+      tfm_destruct(font->metrics);
+      memory_free(font);
+    }
+ }
+
+
+
+
+bool real_font_char_is_valid(const real_font* font, unsigned char c)
+ { assert(font);
+
+   return tfm_contains_char(font->metrics, c);
+ }
+
+
+
+
+int real_font_char_width(const real_font* font, unsigned char c)
+ { assert(font);
+   assert(real_font_char_is_valid(font, c));
+
+   return (int) (font->x_scale * tfm_char_width(font->metrics, c));
+ }
+
+
+
+
+const char* real_font_render_name(const real_font* font)
+ { assert(font);
+
+   return font->render_name;
+ }
+
+
+
+
+int real_font_x_size(const real_font* font)
+ { assert(font);
+
+   return font->x_size;
+ }
+
+
+
+
+int real_font_y_size(const real_font* font)
+ { assert(font);
+
+   return font->y_size;
+ }
+
+
+
+
+#ifndef NDEBUG
+static bool string_chars_are_valid(const real_font* font, const unsigned char* s, unsigned length)
+ { unsigned i;
+
+   for (i = 0; i < length; i++)
+    { if (!real_font_char_is_valid(font, s[i]))
+       { return FALSE;
+       }
+    }
+
+   return TRUE;
+ }
+#endif
+
+
+
+void real_font_string_bounds(const real_font* font, const unsigned char* s, unsigned length, int* height, int* depth)
+ { assert(font != NULL);
+   assert(s != NULL);
+   assert(string_chars_are_valid(font, s, length));
+   assert(height != NULL);
+   assert(depth != NULL);
+
+
+   tfm_bounds(font->metrics, s, length, height, depth);
+   *height = (int)(*height * font->y_scale);
+   *depth  = (int)(*depth  * font->y_scale);
+ }
+
+
+
+
+void real_font_remap_string(const real_font* font, unsigned char* s, unsigned length)
+ { assert(font != NULL);
+   assert(s != NULL);
+   assert(string_chars_are_valid(font, s, length));
+
+   if (font->uses_encoding)
+    { while(length-- > 0)
+       { *s++ |= 128;
+       }
+    }
+ }
+
+
+
+#ifndef NDEBUG
+void real_font_debug_output(const real_font* font)
+ { fprintf
+    ( stderr,
+      "  Scale = (%f, %f)\n"
+      "  Name (of font used for rendering) = %s\n",
+      font->x_scale,
+      font->y_scale,
+      font->render_name
+    );
+
+   tfm_debug_output(font->metrics);
+ }
+#endif

@@ -1,0 +1,2 @@
+SetType pipe:$.debug Text
+Filer_Run pipe:$.debug

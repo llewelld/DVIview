@@ -1,0 +1,12 @@
+/* backtr_sup.h */
+/* Machine code support function for the backtrace() function
+ * (c) Paul Field 1995
+ * v1.00 - 30/9/1995
+ */
+
+#include "kernel.h"
+
+void backtrace_support_current_frame(_kernel_unwindblock* frame);
+ /* Read the current values of fp, sl and pc
+  * (so that _kernel_unwind() can be called)
+  */

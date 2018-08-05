@@ -1,0 +1,2 @@
+configure wimpfont 8
+run BootResources:Configure.FontChange

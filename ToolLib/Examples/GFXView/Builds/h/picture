@@ -1,0 +1,54 @@
+/*** picture.h ***/
+/* A picture is some form of graphic stored in a file.
+ * Currently supported graphics are: Sprite, Draw, JPEG
+ * (c) Paul Field 1995
+ * v1.00 - 6/10/95
+ * v1.10 - 24/11/95 : Added draw file support
+ */
+
+#ifndef os_H
+#include "os.h"
+#endif
+
+
+/* Opaque type */
+typedef struct picture_str picture;
+
+
+
+bool picture_supported_file_type(unsigned file_type);
+ /* Returns TRUE if a picture can be created from a file of type file_type
+  */
+
+picture *picture_create(const char *file_name);
+ /* Pre: file_name != NULL
+  *      picture_supported_file_type(type of file_name)
+  * Exceptions: exception_NO_MEMORY, os (file errors)
+  * Creates a picture from the file 'file_name' and returns it
+  */
+
+void picture_destroy(picture *pic);
+ /* Frees the memory associated with 'pic' (pic may be NULL)
+  */
+
+void picture_draw(const picture *pic, int origin_x, int origin_y, unsigned scale_percent, const os_box *clip);
+ /* Pre: pic != NULL
+  *      clip != NULL
+  *      We're drawing in the current Wimp mode
+  * Draws the picture with it's bottom left corner at (origin_x, origin_y)
+  * scaled by 'scale_percent'%
+  * 'clip' should be the current graphics window
+  */
+
+void picture_size(const picture *pic, unsigned *width, unsigned *height);
+ /* Pre: pic != NULL
+  *      width != NULL
+  *      height != NULL
+  * Returns the width and height of the picture in OS units
+  */
+
+unsigned picture_suggested_scale(const picture *pic);
+ /* Pre: pic != NULL
+  * Returns the scale (as a percentage) at which the picture will be displayed
+  * at 1 dot per pixel (in square pixel modes)
+  */

@@ -1,0 +1,60 @@
+/*** text_plot.h ***/
+/* Functions for plotting text using the desktop font.
+ * Uses Wimp_TextOp on RISC OS 3.5+, otherwise uses the system font.
+ *
+ * (c) Paul Field
+ * v1.00 - 14/6/1995
+ */
+
+#ifndef os_H
+#include "os.h"
+#endif
+
+/* Wimp_TextOp (and text_plot) plots a font with its *baseline* at the y
+ * coordinate given. Some characters will dangle underneath the baseline
+ * ('y' for example). The constant text_plot_baseline_adjustment is the amount
+ * (in OS Units) by which the text may dangle underneath the baseline.
+ *
+ * For example, if you're highlighting some text, you might adjust the call
+ * to draw the background colour like this:
+ *    rectangle(x, y - text_plot_baseline_adjustment, width, wimp_CHAR_YSIZE);
+ */
+
+enum
+ { text_plot_baseline_adjustment = 6
+ };
+
+
+
+
+void text_plot_set_colours(os_colour foreground, os_colour background);
+ /* Sets the colours for future text plotting.
+  * May alter the system GCOL value or the current outline font colours
+  */
+
+
+int text_plot_width(const char* string);
+ /* Pre: string != NULL
+  *
+  * Returns the width, in OS units, of the string for the current desktop font
+  */
+
+
+void text_plot(const char* string, int x, int y);
+ /* Pre: string != NULL
+  *
+  * Plots string in the current desktop font, with the left of the text
+  * starting at x and the text baseline being at y.
+  *
+  * x and y are in OS units.
+  */
+
+
+void text_plot_right_justified(const char* string, int x, int y);
+ /* Pre: string != NULL
+  *
+  * Plots string in the current desktop font, with the right of the text
+  * at x and the text baseline at y.
+  *
+  * x and y are in OS units.
+  */

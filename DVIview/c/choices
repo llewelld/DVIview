@@ -1,0 +1,164 @@
+/**** choices.c ****/
+/* Handles the choices dialogue box
+ * (c) Paul Field
+ */
+
+#include "choices.h"
+
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "numberrange.h"
+
+#include "nev_toolbox.h"
+
+#include "optionfile.h"
+#include "units.h"
+
+
+struct choices_str
+ { unsigned scale;      /* As a percentage */
+   int      left, top;  /* Offsets in draw units */
+ };
+
+
+
+enum choices_component_id
+ { choices_scale_id,
+   choices_left_id,
+   choices_top_id
+ };
+
+
+
+enum
+ { Ev_ChoicesFill = 0x300,
+   Ev_ChoicesDefault = 0x301,
+   Ev_ChoicesSave = 0x302,
+   Ev_ChoicesSet = 0x303
+ };
+
+
+static struct choices_str defaults = {100, 0, 0};
+static struct choices_str choices;
+
+#ifndef NDEBUG
+static bool choices_initialised = FALSE;
+#endif
+
+
+
+
+static void choices_fill(toolbox_o dbox_id)
+ { numberrange_set_value(0, dbox_id, choices_left_id,  DrawToMM10(choices.left));
+   numberrange_set_value(0, dbox_id, choices_top_id,   DrawToMM10(choices.top));
+   numberrange_set_value(0, dbox_id, choices_scale_id, choices.scale);
+ }
+
+
+
+
+static nevent_result choices_fill_ev(bits event_code, toolbox_action *event, toolbox_block *id_block, void *handle)
+ { assert(choices_initialised);
+   assert(event_code == Ev_ChoicesFill || event_code == Ev_ChoicesDefault);
+   NOT_USED(handle);
+   NOT_USED(event);
+
+   if (event_code == Ev_ChoicesDefault)
+    { choices = defaults;
+    }
+   choices_fill(id_block->this_obj);
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result choices_set(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { assert(event_code == Ev_ChoicesSet || event_code == Ev_ChoicesSave);
+   NOT_USED(handle);
+   NOT_USED(event);
+
+   choices.left  = MM10ToDraw(numberrange_get_value(0, id_block->this_obj, choices_left_id));
+   choices.top   = MM10ToDraw(numberrange_get_value(0, id_block->this_obj, choices_top_id));
+   choices.scale = numberrange_get_value(0, id_block->this_obj, choices_scale_id);
+
+   if (event_code == Ev_ChoicesSave)
+    { defaults = choices;
+      optionsfile_save();
+    }
+   choices_fill(id_block->this_obj);
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static void choices_save(FILE* file)
+ { fprintf(file, "scale:%u\noffsets:%d,%d\n", defaults.scale, defaults.left, defaults.top);
+ }
+
+
+
+
+static bool choices_parse(const char* option, char* params)
+ { if (strcmp(option, "scale") == 0)
+    { sscanf(params, "%u", &defaults.scale);
+      return TRUE;
+    }
+   else
+    { if (strcmp(option, "offsets") == 0)
+       { sscanf(params, "%d ,%d", &defaults.left, &defaults.top);
+         return TRUE;
+       }
+    }
+   return FALSE;
+ }
+
+
+
+
+static void choices_finish(void)
+ { choices = defaults;
+ }
+
+
+
+
+void choices_init(void)
+ { /* Register general choices events */
+   assert(!choices_initialised);
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, Ev_ChoicesFill, choices_fill_ev, NULL);
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, Ev_ChoicesDefault, choices_fill_ev, NULL);
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, Ev_ChoicesSave, choices_set, NULL);
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, Ev_ChoicesSet, choices_set, NULL);
+   optionsfile_register(choices_parse, choices_save, choices_finish);
+   choices = defaults;
+#ifndef NDEBUG
+   choices_initialised = TRUE;
+#endif
+ }
+
+
+
+
+unsigned choices_scale(void)
+ { assert(choices_initialised);
+
+   return choices.scale;
+ }
+
+
+
+
+void choices_offsets(int* left, int* top)
+ { assert(choices_initialised);
+   assert(left);
+   assert(top);
+
+   *left = choices.left;
+   *top  = choices.top;
+ }

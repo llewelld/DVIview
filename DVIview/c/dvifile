@@ -1,0 +1,362 @@
+/** dvifile.c **/
+/* loads and manages a dvi file
+ * (c) Paul Field 1995
+ */
+
+#include "dvifile.h"
+
+#include <assert.h>
+#include <string.h>
+#include <stdio.h>
+
+#include "allocate.h"
+#include "exception.h"
+
+#include "hourglass.h"
+
+#include "byte_stream.h"
+#include "bstream_error.h"
+
+
+
+enum { IdentificationByte = 2 };
+enum { DrawUnitsPerInch = 256*180 };
+#define DrawUnitsPerMetre (DrawUnitsPerInch*100/2.54)
+
+struct dvifile_str
+ { page_context  context;
+   int           height;        /* in DVI units */
+   int           width;         /* in DVI units */
+   unsigned      num_pages;
+   page**        pages;
+ };
+
+
+#if 0
+#include <time.h>
+static void test_scan(byte_stream* stream)
+ /* Scans through entire byte stream a command at a time
+  * (to test how long it takes).
+  */
+ { command c;
+   clock_t start;
+   clock_t end;
+   void*   buffer;
+   byte_stream* test_stream;
+   size_t stream_extent;
+
+   assert(byte_stream_get_position(stream) == 0);
+
+   /* Copy file into memory buffer */
+   stream_extent = byte_stream_extent(stream);
+   buffer = memory_allocate(stream_extent);
+   byte_stream_read(stream, buffer, stream_extent);
+   test_stream = byte_stream_construct_from_memory(buffer, stream_extent, byte_stream_name(stream));
+
+   start = clock();
+
+   do
+    { dviops_read_command(test_stream, &c);
+      dviops_command_finished(&c);
+    }
+   while(c.code != command_post_post);
+
+   end = clock();
+
+   byte_stream_destruct(test_stream);
+   memory_free(buffer);
+
+   fprintf(stderr, "Complete scan of '%s' took %fs\n", byte_stream_name(stream), (end-start)/(double)CLOCKS_PER_SEC);
+ }
+#endif
+
+
+
+static page** dvifile_construct_pages(byte_stream* stream, unsigned pages, int last_page, const page_context* context)
+ { page** page_array;
+   int    page_no;
+   int    current_pointer;
+
+   /* Create the array of pages and initialise it to NULL (so it's OK to free all the elements) */
+   page_array = memory_allocate(pages * sizeof(page*));
+   for (page_no = 0; page_no < pages; page_no++)
+    { page_array[page_no] = NULL;
+    }
+
+   try
+    { /* The dvi file can be seen as a linked list of pages. The last page is at the 'head'
+       * of the list.
+       * This code scans through the (file-based) list constructing all the pages
+       */
+      current_pointer = last_page;
+      for (page_no = pages-1; page_no >=0; page_no--)
+       { command c;
+
+         hourglass_percentage(100*((pages-1)-page_no)/pages);
+
+         byte_stream_set_position(stream, current_pointer);
+         dviops_read_command(stream, &c);
+
+         if (c.code != command_bop)
+          { byte_stream_error_throw(stream, "dvi", "PageListBroken");
+          }
+
+         page_array[page_no] = page_construct(current_pointer, c.parameters.bop.count, context);
+         current_pointer = c.parameters.bop.pointer;
+
+         dviops_command_finished(&c);
+       }
+    }
+   catch
+    { for (page_no = 0; page_no < pages; page_no++)
+       { page_destruct(page_array[page_no]);
+       }
+      memory_free(page_array);
+      throw();
+    }
+   catch_end
+
+   return page_array;
+ }
+
+
+
+
+static void read_post(dvifile* df)
+ { command               c_pp;
+   command               c_p;
+   parameters_postamble* p;
+   byte_stream*          stream;
+
+
+   stream = df->context.stream;
+
+   dviops_find_post_postamble(stream);
+   dviops_read_command(stream, &c_pp);
+
+   if (c_pp.code != command_post_post ||
+       c_pp.parameters.post_postamble.id != IdentificationByte)
+    { byte_stream_error_throw(stream, "dvi", "FileCorrupt");
+    }
+
+   byte_stream_set_position(stream, c_pp.parameters.post_postamble.pointer);
+   dviops_command_finished(&c_pp);
+
+
+   dviops_read_command(stream, &c_p);
+
+   if (c_p.code != command_post)
+    { byte_stream_error_throw(stream, "dvi", "FileCorrupt");
+    }
+
+   p = &c_p.parameters.postamble;
+
+
+   /* initialise fonts to NULL so it's OK to destroy them */
+   df->context.fonts = NULL;
+
+   try
+    { double  dvi_to_1e7_metres;
+      command c;
+
+      /** This formula gives a scale which turns dvi dimensions into lengths of 1e-7 metres **/
+      dvi_to_1e7_metres =  p->magnification * (p->numerator / (1000.0 * p->denominator));
+      /** Convert the scale to give lengths in terms of Draw units **/
+      df->context.dvi_to_draw = dvi_to_1e7_metres * DrawUnitsPerMetre * 1e-7;
+      df->context.stack_size  = p->stack_depth;
+      df->context.left_offset = dvifile_DEFAULT_LEFT_OFFSET;
+      df->context.top_offset  = dvifile_DEFAULT_TOP_OFFSET;
+      df->context.fonts       = font_table_load(stream, dvi_to_1e7_metres);
+
+      /* Check font table was OK (a post_post command should immediately follow it) */
+      dviops_read_command(stream, &c);
+      if (c.code != command_post_post)
+       { byte_stream_error_throw(stream, "dvi", "FontTableCorrupt");
+       }
+      dviops_command_finished(&c);
+
+      df->height     = p->height;
+      df->width      = p->width;
+      df->num_pages  = p->pages;
+      df->pages      = dvifile_construct_pages(stream, p->pages, p->pointer, &df->context);
+
+      dviops_command_finished(&c_p);
+    }
+   catch
+    { font_table_destruct(df->context.fonts);
+      dviops_command_finished(&c_p);
+      throw();
+    }
+   catch_end
+ }
+
+
+
+
+dvifile* dvifile_construct(const char* filename)
+ { dvifile* df;
+
+   assert(filename);
+
+   df = memory_allocate(sizeof(dvifile));
+   df->context.stream = NULL;
+
+   try
+    { df->context.stream = byte_stream_construct_from_file(filename);
+      hourglass_on();
+/*test_scan(df->context.stream);*/
+      read_post(df);
+      hourglass_off();
+    }
+   catch
+    { byte_stream_destruct(df->context.stream);
+      memory_free(df);
+      throw();
+    }
+   catch_end
+
+   return df;
+ }
+
+
+
+
+void dvifile_destruct(dvifile* df)
+ { if (df != NULL)
+    { unsigned page_no;
+
+      for (page_no = 0; page_no < df->num_pages; page_no++)
+       { page_destruct(df->pages[page_no]);
+       }
+
+      memory_free(df->pages);
+      font_table_destruct(df->context.fonts);
+      byte_stream_destruct(df->context.stream);
+      memory_free(df);
+    }
+ }
+
+
+
+
+page* dvifile_page(dvifile* df, unsigned page_num)
+ { page* p;
+
+   assert(page_num < df->num_pages);
+
+   p = df->pages[page_num];
+   page_inc_reference(p);
+   return p;
+ }
+
+
+
+
+unsigned dvifile_pages(const dvifile* df)
+ { assert(df);
+
+   return df->num_pages;
+ }
+
+
+
+
+const char* dvifile_filename(const dvifile* df)
+ { assert(df);
+
+   return byte_stream_name(df->context.stream);
+ }
+
+
+
+
+unsigned dvifile_size(const dvifile* df)
+ { assert(df != NULL);
+
+   return byte_stream_extent(df->context.stream);
+ }
+
+
+
+
+void dvifile_time_stamp(const dvifile* df, unsigned char UTC[5])
+ { assert(df != NULL);
+   assert(UTC != NULL);
+
+   byte_stream_time_stamp(df->context.stream, UTC);
+ }
+
+
+
+
+void dvifile_page_bounds(const dvifile* df, unsigned* height, unsigned* width)
+ { assert(df);
+   assert(height);
+   assert(width);
+
+   *height = (unsigned)(df->height * df->context.dvi_to_draw / DrawinOS * MillipointsinOS);
+   *width  = (unsigned)(df->width  * df->context.dvi_to_draw / DrawinOS * MillipointsinOS);
+ }
+
+
+
+
+void dvifile_page_fonts(const dvifile* df, unsigned page_num, font_set* fonts)
+ { assert(page_num < df->num_pages);
+
+   page_add_fonts_to_set(df->pages[page_num], fonts);
+ }
+
+
+
+
+void dvifile_offsets(const dvifile* df, int* left, int* top)
+ { assert(df);
+
+   *left = df->context.left_offset;
+   *top  = df->context.top_offset;
+ }
+
+
+
+
+void dvifile_set_offsets(dvifile* df, int left, int top)
+ { assert(df);
+
+   df->context.left_offset = left;
+   df->context.top_offset  = top;
+ }
+
+
+
+
+#ifndef NDEBUG
+void dvifile_debug_output(const dvifile* df)
+ { int i;
+
+   fprintf
+    ( stderr,
+      "dvifile structure\n"
+      "  filename = %s\n"
+      "  dvi_to_draw = %f\n"
+      "  height x width = %d x %d\n"
+      "  stack size = %u\n"
+      "  pages = %u\n"
+      "  Pages:\n",
+      byte_stream_name(df->context.stream),
+      df->context.dvi_to_draw,
+      df->height,
+      df->width,
+      df->context.stack_size,
+      df->num_pages
+    );
+
+   for (i=0; i < df->num_pages; i++)
+    { fprintf(stderr, "Page %u\n", i);
+      page_debug_output(df->pages[i]);
+    }
+
+   fputs("\n", stderr);
+   font_table_debug_output(df->context.fonts);
+ }
+#endif

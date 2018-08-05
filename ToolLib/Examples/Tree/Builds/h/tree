@@ -1,0 +1,44 @@
+/*** tree.h ***/
+/* Simple tree drawing routine
+ * (c) Paul Field
+ * v1.00 - 7/10/95
+ * v2.00 - 21/11/95 (More complex trees)
+ */
+
+#include "line_processor.h"
+
+
+/* Values that vary from branch to branch */
+typedef struct tree_state_str
+ { unsigned segment_length;
+   int      tree_angle;
+   int      branch_angle;
+   unsigned remaining_depth;
+ }tree_state;
+
+
+/* Values that are constant for every tree branch */
+typedef struct tree_parameters_str
+ { unsigned segments;
+   double   left_proportion;
+   double   right_proportion;
+   double   length_scale;
+   double   length_scale_scale;
+   double   angle_scale;
+ }tree_parameters;
+
+
+/* The complete specification of a tree */
+typedef struct tree_def_str
+ { tree_state      initial_state;
+   tree_parameters parameters;
+ }tree_def;
+
+
+
+void tree_calculate(int x, int y, const tree_def *tree, const line_processor *lines);
+ /* Calculates the lines involved in drawing a tree as defined by 'tree' and passes them to 'lines'.
+  * The origin of the tree is (x,y).
+  * You can pick any units of length (i.e. for x,y and tree->initial_state.segment_length)
+  * although your line_processor may require particular units to be used.
+  */

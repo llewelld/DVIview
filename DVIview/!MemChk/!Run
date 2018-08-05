@@ -1,0 +1,3 @@
+RMEnsure DDEUtils 0 System:modules.ddeutils
+Prefix <Obey$Dir>
+Makatic.Medium @ CCExtra="-DPRINT_VERBOSE -zpc1 -DMemCheck_MEMCHECK -JMemCheck:ANSI.,:mem -fw -g" LinkExtra=-d ExtraLibs="ToolLib:o.ToolLibMem MemCheck:o.MC"

@@ -1,0 +1,39 @@
+/**** renderer.h ****/
+/* An 'abstract' type for rendering dvi file contents
+ * (c) Paul Field
+ */
+
+#include "real_font.h"
+
+
+typedef struct renderer_str
+ { void (*render_char)(const real_font* font, int x, int y, unsigned char c);
+    /* Pre: font != NULL
+     *
+     * Renders character 'c' from the font at (x,y).
+     * (x,y) is in DVI units.
+     */
+
+
+   void (*render_rule)(int x, int y, int width, int height);
+    /* Renders a rectangle with width 'width' and height 'height' at (x,y).
+     * All units are DVI units.
+     */
+
+
+   void (*render_special)(int x, int y, const char* special);
+    /* Pre: special != NULL
+     *
+     * Processes the special command. (x,y) is the origin in DVI units for special
+     * graphics operations.
+     */
+
+   void (*set_scale)(double scale);
+    /* Applies the scaling factor (about 0,0) to all future render calls
+     */
+
+   double (*get_scale)(void);
+    /* Returns the current scaling factor
+     */
+ }
+renderer;

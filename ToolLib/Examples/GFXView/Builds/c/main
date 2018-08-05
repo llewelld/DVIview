@@ -1,0 +1,70 @@
+/*** Graphics View ***/
+/* A demonstration of Toolbox programming using OSLib
+ * (c) Paul Field 1995
+ * v1.00 - 18/9/1995
+ * v1.10 - 23/11/1995 : Now uses the ToolLib application framework
+ */
+
+/* Notes:
+ *
+ * OSLib refers to toolbox events as 'actions' and, for consistancy, we follow
+ * this convention.
+ *
+ * The NOT_USED(var) macro is used to supress a compiler warnings about 'var'
+ * being declared but not being used. This warning occurs when the compiler
+ * features "ah" are enabled. You should activate these features because they
+ * enable useful warnings which can indicate bugs in your program.
+ */
+
+#include <stdio.h>
+
+#include "application.h"
+#include "nev_wimp.h"
+#include "shifting.h"
+#include "viewer.h"
+
+
+static void graphics_view_initialise(int argc, char *argv[])
+ { NOT_USED(argc);
+   NOT_USED(argv);
+
+#ifndef NDEBUG
+   /* Redirect error stream */
+   freopen("pipe:$.debug", "w", stderr);
+#endif
+
+   nevent_wimp_initialise();
+   shifting_initialise_for_toolbox();
+   viewer_initialise();
+ }
+
+
+
+/* Respond to all actions and messages */
+/* Lists generated automatically by ToolLib */
+static const int toolbox_actions[] =
+ { 0x100,
+   0x44ec0,
+   0x82a91,
+   0x82c00,
+   0x82c02,
+   0
+ };
+
+static const int wimp_messages[] =
+ { 0x3,
+   0x5,
+   0
+ };
+
+
+/* The variable which the application system required */
+application this_application =
+ { "<GFXView$Dir>",
+   310,
+   toolbox_actions,
+   wimp_messages,
+   5,
+   graphics_view_initialise,
+   NULL
+ };

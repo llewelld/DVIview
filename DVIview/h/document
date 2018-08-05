@@ -1,0 +1,68 @@
+/**** document.h ****/
+/* Handles a document (i.e. dvifile + viewers (windows))
+ * (c) Paul Field
+ */
+
+#ifndef _document_h
+#define _document_h
+
+typedef struct document_str document;
+
+#include "viewer.h"
+#include "dvifile.h"
+#include "print_doc.h"
+
+void document_init(void);
+ /* Initialises the document system
+  * This call must be made before the vprint dialogue is auto-created (because it initialises
+  * the vprint system).
+  */
+
+void document_construct(const char* filename);
+ /* Pre: filename != NULL
+  * Creates a document containing a single viewer
+  */
+
+bool document_exists(const char* filename);
+ /* Pre: filename != NULL
+  * Returns TRUE if a document object has been created for filename.
+  * (filenames are canonicalised before being compared)
+  */
+
+
+/**************************************************************/
+/* The following can only be called by viewer objects because
+ * only they have access to document objects (note that
+ * document_construct() does not return an object)
+ */
+
+
+dvifile* document_dvifile(document* doc);
+ /* Returns the dvifile associated with doc
+  */
+
+void document_paper_size(const document* doc, unsigned* width, unsigned* height);
+ /* Returns the width and height of the document paper in OS units
+  */
+
+void document_add_viewer(document* doc, viewer* view);
+ /* Pre: view is a viewer onto doc
+  * Registers 'view' with doc.
+  */
+
+void document_remove_viewer(document* doc, viewer* view);
+ /* Pre: view has been registered with doc
+  * Unregisters view with doc.
+  */
+
+void document_save_page(const document* doc, unsigned page_no, const char* filename);
+ /* Saves page page_no from document as the file filename
+  * (page numbers start with 0)
+  */
+
+
+extern print_doc abstract_document;
+ /* Allow document to be used in a printing system */
+
+
+#endif

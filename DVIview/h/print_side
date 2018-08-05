@@ -1,0 +1,30 @@
+/*** print_side.h ***/
+/* A print_side is able to plot one side of a piece of paper
+ * (c) Paul Field 1996
+ * v1.00 - 2/5/1996
+ */
+
+#ifndef print_side_h
+#define print_side_h
+
+#ifndef os_H
+#include "os.h"
+#endif
+
+
+typedef struct print_side_str
+ { void (*declare)(void);
+    /* Let the printer manager know about the
+     * areas that need plotting on this side
+     */
+
+   void (*draw)(const os_box* clip, unsigned id);
+    /* Draw the areas on this side
+     */
+
+   void (*destruct)(void);
+    /* Free resources associated with the side
+     */
+ }print_side;
+
+#endif

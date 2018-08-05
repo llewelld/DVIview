@@ -1,0 +1,522 @@
+/**** papersize.c ****/
+/* Deals with paper sizes (No surely not...)
+ * (c) Paul Field
+ */
+
+#include "papersize.h"
+
+#include <assert.h>
+#include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "exception.h"
+#include "list.h"
+#include "nev_toolbox.h"
+#include "tbx.h"
+
+#include "menu.h"
+#include "numberrange.h"
+#include "writablefield.h"
+
+#include "optionfile.h"
+#include "units.h"
+
+
+enum
+ { NameLength = 20
+ };
+
+
+enum
+ { Ev_PaperFill = 0x400,
+   Ev_PaperDelete = 0x401,
+   Ev_PaperSave = 0x402,
+   Ev_PaperSet = 0x403
+ };
+
+
+
+enum paper_component_id
+ { paper_name_id,
+   paper_width_id,
+   paper_height_id,
+   paper_delete_id
+ };
+
+
+struct paper_size_str
+ { unsigned references;
+   char     name[NameLength+1];
+   unsigned width;            /* In millipoints */
+   unsigned height;
+ };
+
+static toolbox_o paper_edit_dialogue_id = toolbox_NULL_OBJECT;
+static list* loading_list;        /* Used to store paper sizes as they're loaded from the options file */
+
+
+#ifndef NDEBUG
+static bool papersize_initialised = FALSE;
+#endif
+
+
+
+static paper_size* paper_size_copy(const paper_size* p)
+ { paper_size* new_p;
+
+   assert(p);
+
+   new_p = list_alloc_element(sizeof(struct paper_size_str));
+   *new_p = *p;
+   new_p->references = 0;
+   return new_p;
+ }
+
+
+
+
+static paper_size* paper_size_construct(const char* name, unsigned width, unsigned height)
+ { paper_size* new_p;
+
+   assert(name);
+
+   new_p = list_alloc_element(sizeof(struct paper_size_str));
+
+   strncpy(new_p->name, name, NameLength);
+   new_p->name[NameLength] = '\0';
+   new_p->width = width;
+   new_p->height = height;
+   new_p->references = 0;
+   return new_p;
+ }
+
+
+
+
+static void paper_size_delete(paper_size* p)
+ { if (p != NULL)
+    { assert(p->references == 0);
+
+      list_free_element(p);
+    }
+ }
+
+
+
+/******************************************************/
+/* Routines for managing the paper size lists and menu
+ */
+
+static struct paper_size_str a4_paper_size = {0, "A4", 594992, 841890};
+static toolbox_o paper_menu_id = toolbox_NULL_OBJECT;
+static list* paper_list;     /* List of current paper sizes - always has at least one element */
+
+
+static bool paper_list_find(const char* name, paper_size** p)
+ { list_ptr ptr;
+
+   for (ptr = list_ptr_head(paper_list); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+    { *p = list_ptr_element(ptr);
+      if (strcmp((*p)->name, name) == 0)
+       { return TRUE;
+       }
+    }
+   return FALSE;
+ }
+
+
+
+
+
+static void paper_list_delete(paper_size* p)
+ { list_ptr ptr;
+
+   assert(paper_menu_id != toolbox_NULL_OBJECT);
+   assert(!list_is_empty(paper_list));
+
+   menu_remove_entry(0, paper_menu_id, (toolbox_c) p);
+
+   for (ptr = list_ptr_head(paper_list); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+    { if (list_ptr_element(ptr) == p)
+       { list_ptr_remove_element(ptr);
+         paper_size_delete(p);
+         break;
+       }
+    }
+ }
+
+
+
+
+static void paper_menu_add(paper_size* p, menu_add_at where)
+ { menu_entry_object entry;
+
+   assert(paper_menu_id != toolbox_NULL_OBJECT);
+   entry.flags = 0;
+   entry.cmp = (toolbox_c) p;
+   entry.click_action = Ev_PaperMenuSelect;
+   entry.text = p->name;
+   entry.text_limit = strlen(entry.text)+1;
+   entry.click_object_name = NULL;
+   entry.sub_menu_object_name = NULL;
+   entry.help = NULL;
+
+   menu_add_entry(0, paper_menu_id, where, &entry);
+ }
+
+
+
+
+static void paper_list_add(paper_size* p)
+ { assert(paper_menu_id != toolbox_NULL_OBJECT);
+
+   paper_menu_add(p, menu_ADD_AT_START);
+   list_cons(paper_list, p);
+ }
+
+
+
+static nevent_result paper_menu_untick(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { list_ptr ptr;
+
+   assert(event_code == Ev_PaperMenuFill);
+   assert(id_block->this_obj == paper_menu_id);
+   NOT_USED(event);
+   NOT_USED(handle);
+   NOT_USED(id_block);
+   NOT_USED(event_code);
+
+   for (ptr = list_ptr_head(paper_list); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+    { menu_set_tick(0, paper_menu_id, (toolbox_c)list_ptr_element(ptr), 0);
+    }
+
+   /* Menu is cleared but we don't claim the event so that others can tick entries */
+   return nevent_NOT_HANDLED;
+ }
+
+
+
+
+
+/*******************************************/
+
+
+static void paper_fill_with(const paper_size* p)
+ { assert(p);
+   assert(paper_edit_dialogue_id != toolbox_NULL_OBJECT);
+
+   writablefield_set_value(0, paper_edit_dialogue_id, paper_name_id, p->name);
+   numberrange_set_value(0, paper_edit_dialogue_id, paper_width_id,  MillipointsToMM10_u(p->width));
+   numberrange_set_value(0, paper_edit_dialogue_id, paper_height_id, MillipointsToMM10_u(p->height));
+   tbx_gadget_faded_iff(paper_edit_dialogue_id, paper_delete_id, p->references != 0 || list_length(paper_list) <= 1);
+ }
+
+
+
+
+static nevent_result paper_fill(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { assert(event_code == Ev_PaperFill);
+   NOT_USED(event);
+   NOT_USED(handle);
+   NOT_USED(event_code);
+   NOT_USED(id_block);
+
+   assert(paper_edit_dialogue_id == id_block->this_obj);
+
+   paper_fill_with(list_ptr_element(list_ptr_head(paper_list)));
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result paper_delete(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { paper_size* p;
+   char        name[NameLength+1];
+
+   assert(event_code == Ev_PaperDelete);
+   assert(id_block->this_obj == paper_edit_dialogue_id);
+   NOT_USED(event);
+   NOT_USED(handle);
+   NOT_USED(event_code);
+   NOT_USED(id_block);
+
+   writablefield_get_value(0, paper_edit_dialogue_id, paper_name_id, name, NameLength+1);
+   if (paper_list_find(name, &p))
+    { paper_list_delete(p);
+    }
+   paper_fill_with(list_ptr_element(list_ptr_head(paper_list)));
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result paper_set(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { paper_size* p;
+   char        name[NameLength+1];
+   int         width;
+   int         height;
+
+   assert(event_code == Ev_PaperSet || event_code == Ev_PaperSave);
+   assert(id_block->this_obj == paper_edit_dialogue_id);
+   NOT_USED(event);
+   NOT_USED(handle);
+   NOT_USED(event_code);
+   NOT_USED(id_block);
+
+   writablefield_get_value(0, paper_edit_dialogue_id, paper_name_id, name, NameLength+1);
+   width  = numberrange_get_value(0, paper_edit_dialogue_id, paper_width_id);
+   height = numberrange_get_value(0, paper_edit_dialogue_id, paper_height_id);
+   width  = MM10ToMillipoints_u(width);
+   height = MM10ToMillipoints_u(height);
+   if (paper_list_find(name, &p))
+    { /* Alter existing paper size */
+      p->height = height;
+      p->width  = width;
+
+      if (p->references > 0)  /* Someone needs notifying of the change */
+       { toolbox_action event;
+         event.size = sizeof(papersize_action_size_changed) + 4*sizeof(int);
+         event.action_no = Ev_PaperSizeChanged;
+         ((papersize_action_size_changed *)&event.data.reserved)->paper = p;
+         toolbox_raise_toolbox_event(0, toolbox_NULL_OBJECT, toolbox_NULL_COMPONENT, &event);
+       }
+    }
+   else
+    { /* Create new paper size */
+      p = paper_size_construct(name, width, height);
+      paper_list_add(p);
+    }
+   if (event_code == Ev_PaperSave)
+    { optionsfile_save();
+    }
+   paper_fill_with(p);
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result paper_select(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { assert(event_code == Ev_PaperMenuSelect);
+   NOT_USED(event);
+   NOT_USED(handle);
+   NOT_USED(event_code);
+
+   if (id_block->parent_obj == paper_edit_dialogue_id)
+    { paper_fill_with((paper_size*)id_block->this_cmp);
+      return nevent_HANDLED;
+    }
+   return nevent_NOT_HANDLED;
+ }
+
+
+
+
+
+static bool papersize_parse(const char* option, char* params)
+ { paper_size* new_p;
+   char        name[NameLength+1];
+   unsigned    width;
+   unsigned    height;
+
+   if (strcmp(option, "paper") != 0)
+    { return FALSE;
+    }
+
+   if (sscanf(params, "\"%20[^\"]\",%u,%u", name, &width, &height) == 3)
+    { new_p = paper_size_construct(name, width, height);
+      list_cons(loading_list, new_p);
+    }
+   return TRUE;
+ }
+
+
+
+
+static void papersize_save(FILE* file)
+ { list_ptr ptr;
+
+   for (ptr = list_ptr_head(paper_list); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+    { paper_size* p;
+
+      p = list_ptr_element(ptr);
+      fprintf(file, "paper:\"%s\",%u,%u\n", p->name, p->width, p->height);
+    }
+ }
+
+
+
+
+static void papersize_finish(void)
+ { assert(paper_menu_id != toolbox_NULL_OBJECT);
+
+   /* Empty existing list and copy in loaded sizes */
+   if (!list_is_empty(loading_list))
+    { while(!list_is_empty(paper_list))
+       { paper_size* p;
+
+         p = list_remove_head(paper_list);
+         menu_remove_entry(0, paper_menu_id, (toolbox_c)p);
+         paper_size_delete(p);
+       }
+      while(!list_is_empty(loading_list))
+       { paper_list_add(list_remove_head(loading_list));
+       }
+    }
+ }
+
+
+
+
+void papersize_init(void)
+ { paper_size* a4;
+
+   assert(!papersize_initialised);
+   assert(paper_menu_id == toolbox_NULL_OBJECT);
+   assert(paper_edit_dialogue_id == toolbox_NULL_OBJECT);
+
+   loading_list = list_create();
+   paper_list   = list_create();
+   a4           = paper_size_copy(&a4_paper_size);
+
+   paper_menu_id = toolbox_create_object(0, (toolbox_id) "PaperMenu");
+   nevent_toolbox_register_handler(paper_menu_id, Ev_PaperMenuSelect, paper_select, NULL);
+   nevent_toolbox_register_handler(paper_menu_id, Ev_PaperMenuFill, paper_menu_untick, NULL);
+   paper_list_add(a4);
+
+   paper_edit_dialogue_id = toolbox_create_object(0, (toolbox_id) "PaperSize");
+   nevent_toolbox_register_handler(paper_edit_dialogue_id, Ev_PaperFill, paper_fill, NULL);
+   nevent_toolbox_register_handler(paper_edit_dialogue_id, Ev_PaperDelete, paper_delete, NULL);
+   nevent_toolbox_register_handler(paper_edit_dialogue_id, Ev_PaperSave, paper_set, NULL);
+   nevent_toolbox_register_handler(paper_edit_dialogue_id, Ev_PaperSet, paper_set, NULL);
+
+   optionsfile_register(papersize_parse, papersize_save, papersize_finish);
+
+#ifndef NDEBUG
+   papersize_initialised = TRUE;
+#endif
+ }
+
+
+
+
+paper_size* papersize_closest(unsigned width, unsigned height, bool* result_landscape)
+ { list_ptr    ptr;
+   unsigned    best_clip_area;
+   unsigned    best_diff;
+   bool        landscape;
+   bool        best_landscape;
+   paper_size* best_p;
+
+   /* A 'diff' is the sum of the differences in height and width between the page and paper
+    * We look for the paper size that minimizes the area of page clipped off. Given equal
+    * amount clipped off (usually 0) we choose the paper with width and height closest
+    * to the page's (i.e. we minimise the 'diff')
+    */
+
+   assert(papersize_initialised);
+
+   best_clip_area = UINT_MAX;
+   best_diff      = UINT_MAX;
+   best_landscape = FALSE;
+   best_p         = NULL;
+
+   assert(TRUE == FALSE+1);
+   for (landscape = FALSE; landscape <= TRUE; landscape++)
+    { for (ptr = list_ptr_head(paper_list); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+       { unsigned    p_width;
+         unsigned    p_height;
+         unsigned    diff;
+         unsigned    clip_area;
+         paper_size* p;
+
+         p = list_ptr_element(ptr);
+         papersize_size(p, landscape, &p_width, &p_height);
+
+         /* Calculate amount of page clipped off (too large if both clip - but that's not important)
+          * We divide both numbers to try to avoid overflow
+          */
+         clip_area = 0;
+         if (p_width < width)
+          { unsigned width_diff_d;
+            unsigned height_d;
+
+            width_diff_d = (width-p_width)/128;
+            height_d = height/128;
+
+            assert(height_d == 0 || width_diff_d <= UINT_MAX/height_d);  /* Overflow test */
+            clip_area += width_diff_d*height_d;
+          }
+
+         if (p_height < height)
+          { unsigned height_diff_d;
+            unsigned width_d;
+
+            height_diff_d = (height-p_height)/128;
+            width_d = width/128;
+
+            assert(width_d == 0 || height_diff_d <= UINT_MAX/width_d);  /* Overflow test */
+            assert(clip_area <= UINT_MAX - height_diff_d*width_d);    /* Overflow test (for addition) */
+            clip_area += height_diff_d*width_d;
+          }
+
+         diff = abs((int)p_width-(int)width) + abs((int)p_height-(int)height);
+
+         if (clip_area < best_clip_area || (clip_area == best_clip_area && diff <= best_diff))
+          { best_clip_area = clip_area;
+            best_diff = diff;
+            best_p = p;
+            best_landscape = landscape;
+          }
+       }
+    }
+
+   *result_landscape = best_landscape;
+   assert(best_p);
+   best_p->references++;
+   return best_p;
+ }
+
+
+
+
+void papersize_size(const paper_size* p, bool landscape, unsigned* width, unsigned* height)
+ { assert(papersize_initialised);
+   assert(p);
+
+   if (landscape)
+    { *width  = p->height;
+      *height = p->width;
+    }
+   else
+    { *width  = p->width;
+      *height = p->height;
+    }
+ }
+
+
+
+
+paper_size* papersize_using(paper_size* p)
+ { assert(p);
+
+   p->references++;
+   return p;
+ }
+
+
+
+
+void papersize_finished(paper_size* p)
+ { assert(p);
+   assert(p->references > 0);
+
+   p->references--;
+ }

@@ -1,0 +1,73 @@
+/*** nev_wimp.h ***/
+/* Handle Wimp events
+ * By Paul Field
+ * v1.00 - 24/5/1996
+ */
+
+
+/* Notionally there is a set of tuples <object_id, event_number, handler, handle>
+ * called event_handlers.
+ *
+ * When a wimp event W occurs, tuples with a matching object_id and event_number
+ * are selected and handler() is called until a call returns nevent_HANDLED.
+ *
+ * Tuples are ordered so that those with object_id == nevent_ALL_OBJECTS come last
+ * and otherwise tuples are in reverse order of their registration (i.e. most recently
+ * registered first).
+ */
+
+
+#include "nevent.h"
+
+
+/* An event number that indicates the handler should be called for any event */
+#define nevent_ALL_EVENTS  ((wimp_event_no)(-1))
+
+
+typedef nevent_result (*nevent_wimp_handler)
+ ( wimp_event_no  event_num,
+   wimp_block*    event,
+   toolbox_block* id_block,
+   void*          handle
+ );
+
+
+
+
+void nevent_wimp_register_handler(toolbox_o object_id, wimp_event_no event_num, nevent_wimp_handler handler, void* handle);
+ /* Pre:  handler != NULL
+  *       event_num may equal nevent_ALL_EVENTS
+  *       object_id may equal nevent_ALL_OBJECTS
+  *       <object_id, event_num, handler, handle> is not a member of event_handlers
+  * Post: event_handlers == old_event_handlers UNION { <object_id, event_num, handler, handle> }
+  * Exceptions: exception_NO_MEMORY
+  *
+  * Registers 'handler' as a function to be called when event 'event_num'
+  * occurs on the object 'object_id'. 'handle' is a value which will be passed
+  * to 'handler' and so can associate a data structure with the object.
+  */
+
+
+void nevent_wimp_deregister_handler(toolbox_o object_id, wimp_event_no event_code, nevent_wimp_handler handler, void* handle);
+/* Pre: <object_id, event_num, handler, handle> is a member of event_handlers
+ * Exceptions: none
+ *
+ * De-registers 'handler'.
+ */
+
+
+void nevent_wimp_deregister_all_handlers(toolbox_o object_id);
+ /* Pre:  object_id != nevent_ALL_OBJECTS
+  * Post: event_handlers = old_event_handlers - { t | t in old_event_handlers && t.object_id == object_id }
+  * Exceptions: none
+  *
+  * Removes all handlers associated with object_id
+  */
+
+
+
+void nevent_wimp_initialise(void);
+ /* Exceptions: exception_NO_MEMORY
+  *
+  * Sets up the wimp event handling system - call this before any other routines in this file.
+  */

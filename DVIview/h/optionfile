@@ -1,0 +1,51 @@
+/**** optionfile.h ****/
+/* Handles an option file
+ * (c) Paul Field
+ */
+
+/* An option file is a number of lines of the form:
+ * <Option> [:<OptionParams>]
+ *
+ * Each part of the program that wishes to use some options
+ * uses optionsfile_register() to register functions for saving
+ * and loading options:
+ */
+
+#include "bool.h"
+#include <stdio.h>
+
+typedef bool (*options_parse_fn)(const char* option, char* params);
+ /* Passed an <Option>,<OptionParams> pair. In the case of no
+  * parameters an empty string "" is passed in params.
+  * Returns TRUE if the option is recognised
+  * If you return TRUE then you may mangle the contents of params
+  * as you please.
+  */
+
+typedef void (*options_save_fn)(FILE* file);
+ /* Save lines out to the options file
+  * (Don't bother checking for file errors - it's done for you)
+  */
+
+typedef void (*options_finish_fn)(void);
+ /* Tidy up data structures or whatever
+  * Called at the end of optionsfile_load (will be
+  * called if there's an error during reading - so you
+  * might not have received any parse calls - but not
+  * if the options file wouldn't open).
+  */
+
+
+
+void optionsfile_register(options_parse_fn, options_save_fn, options_finish_fn);
+ /* Registers a parse, save and finish functions for processing options
+  * The finish function may be NULL.
+  */
+
+void optionsfile_load(void);
+ /* Call to load the options file
+  */
+
+void optionsfile_save(void);
+ /* Call to save the options file.
+  */

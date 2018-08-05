@@ -1,0 +1,184 @@
+/**** command_processor.c ****/
+/* Processes dvi commands
+ * (c) Paul Field
+ */
+
+#include "command_processor.h"
+
+#include <assert.h>
+
+#include "exception.h"
+
+#include "var_stack.h"
+
+
+/* State of the command_processor */
+static const renderer*   render;
+static dvi_vars          current_vars;
+static const tex_font*   current_font;
+static double            dvi_to_draw;
+
+#ifndef NDEBUG
+static bool active = FALSE;
+#endif
+
+
+
+
+static void command_process(const command* c, const font_table* fonts)
+ { switch(c->code)
+    { case command_set:
+        if (tex_font_char_is_valid(current_font, c->parameters.character))
+         { tex_font_render(current_font, current_vars.h, current_vars.v, c->parameters.character, render);
+           current_vars.h += tex_font_char_width(current_font, c->parameters.character);
+         }
+        break;
+
+      case command_set_rule:
+        render->render_rule(current_vars.h, current_vars.v, c->parameters.rule.width, c->parameters.rule.height);
+        current_vars.h += c->parameters.rule.width;
+        break;
+
+      case command_put:
+        if (tex_font_char_is_valid(current_font, c->parameters.character))
+         { tex_font_render(current_font, current_vars.h, current_vars.v, c->parameters.character, render);
+         }
+        break;
+
+      case command_put_rule:
+        render->render_rule(current_vars.h, current_vars.v, c->parameters.rule.width, c->parameters.rule.height);
+        break;
+      case command_nop:      break;
+      case command_eop:      break;
+      case command_fnt_def:  break;
+      case command_push:     var_stack_push(&current_vars); break;
+      case command_pop:      var_stack_pop(&current_vars);  break;
+      case command_right:    current_vars.h += c->parameters.distance; break;
+      case command_w:        current_vars.w = c->parameters.distance;  /* no break */
+      case command_w0:       current_vars.h += current_vars.w;        break;
+      case command_x:        current_vars.x = c->parameters.distance;  /* no break */
+      case command_x0:       current_vars.h += current_vars.x;        break;
+      case command_down:     current_vars.v += c->parameters.distance; break;
+      case command_y:        current_vars.y = c->parameters.distance;  /* no break */
+      case command_y0:       current_vars.v += current_vars.y;        break;
+      case command_z:        current_vars.z = c->parameters.distance; /* no break */
+      case command_z0:       current_vars.v += current_vars.z;        break;
+
+      case command_fnt:
+        if (!font_table_get_font(fonts, c->parameters.font_no, &current_font))
+         { throw_user(exception_UNKNOWN_FONT);
+         }
+        break;
+
+      case command_xxx:
+        render->render_special(current_vars.h, current_vars.v, c->parameters.string);
+        break;
+
+      default:
+        throw_user(exception_UNDEFINED_COMMAND);
+    }
+ }
+
+
+
+
+void command_processor_page(const font_table* fonts, byte_stream* stream, const renderer* r, double to_draw)
+ { assert(!active);
+   assert(fonts != NULL);
+   assert(stream != NULL);
+   assert(r != NULL);
+
+   /* Set up command_processor state */
+   render      = r;
+   dvi_to_draw = to_draw;
+#ifndef NDEBUG
+   active = TRUE;
+#endif
+
+   var_stack_construct();
+
+   try
+    { command c;
+
+      current_font = NULL;
+      current_vars.h = 0;
+      current_vars.v = 0;
+      current_vars.w = 0;
+      current_vars.x = 0;
+      current_vars.y = 0;
+      current_vars.z = 0;
+
+      /* Skip bop command */
+      dviops_read_command(stream, &c);
+      assert(c.code == command_bop);
+      dviops_command_finished(&c);
+
+      do
+       { dviops_read_command(stream, &c);
+         command_process(&c, fonts);
+         dviops_command_finished(&c);
+       }
+      while(c.code != command_eop);
+    }
+   catch
+    { var_stack_destruct();
+#ifndef NDEBUG
+   active = FALSE;
+#endif
+      throw();
+    }
+   catch_end
+
+   var_stack_destruct();
+
+#ifndef NDEBUG
+   active = FALSE;
+#endif
+ }
+
+
+
+
+void command_processor_macro(const font_table* fonts, byte_stream* stream, double scale)
+ { const tex_font* old_font;
+   command         c;
+   double          old_scale;
+   void            (*set_scale)(double);
+
+   assert(active);
+   assert(fonts != NULL);
+   assert(stream != NULL);
+
+   var_stack_push(&current_vars);
+
+   old_scale = render->get_scale();
+
+   /* Equivalent to: render->set_scale(scale * old_scale)
+    * but avoids compiler bug when compiling with memcheck flags
+    */
+   set_scale = render->set_scale;
+   set_scale(scale * old_scale);
+
+   /* Adjust (h,v) so it is the same position under the new scaling */
+   current_vars.h = (int)(current_vars.h / scale);
+   current_vars.v = (int)(current_vars.v / scale);
+
+   current_vars.w = 0;
+   current_vars.x = 0;
+   current_vars.y = 0;
+   current_vars.z = 0;
+
+   old_font = current_font;
+   current_font = font_table_first_font(fonts);
+
+   while(byte_stream_get_position(stream) < byte_stream_extent(stream))
+    { dviops_read_command(stream, &c);
+      command_process(&c, fonts);
+      dviops_command_finished(&c);
+    }
+
+   set_scale(old_scale);
+   current_font = old_font;
+
+   var_stack_pop(&current_vars);
+ }

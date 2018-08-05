@@ -1,0 +1,44 @@
+/**** viewer.h ****/
+/* Handles document views (windows)
+ * (c) Paul Field
+ */
+
+#ifndef _viewer_h
+#define _viewer_h
+
+typedef struct viewer_str viewer;
+
+#include "document.h"
+#include "bool.h"
+
+void viewer_init(void);
+ /* Initialises the viewer system
+  */
+
+viewer* viewer_construct(document* doc);
+ /* Exceptions: exception_NO_MEMORY, os exceptions
+  * Creates a viewer on document doc (and registers it with doc),
+  * opens it and returns it.
+  */
+
+void viewer_destruct(viewer* view);
+ /* Releases all resources associated with view
+  * (view may be NULL)
+  */
+
+void viewer_shift_display(viewer* view, int old_left, int old_top, int left, int top);
+ /* This should be called when the document offsets change from (old_left, old_top)
+  * to (left, top). It allows the viewer to update its contents to reflect the new offsets
+  */
+
+void viewer_update_extent(viewer* view);
+ /* This should be called when the document's paper size changes and the viewer needs to
+  * alter its extent
+  */
+
+document* viewer_document(viewer* view);
+ /* Returns the document that view views
+  */
+
+
+#endif

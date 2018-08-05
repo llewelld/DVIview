@@ -1,0 +1,770 @@
+/** dviops.c **/
+/* Provides an abstraction of the dvi commands:
+ * (c) Paul Field 1995
+ */
+
+#include "dviops.h"
+
+#include <assert.h>
+#include <stddef.h>
+#include <stdio.h>
+
+#include "allocate.h"
+#include "exception.h"
+
+
+/**** Local functions which convert bytes from the parameter_buffer into paramaters in 'p' ****/
+/**** The convertion may require further information to be read from 'stream'              ****/
+
+static void process_signed_1(   byte_stream* stream, byte parameter_buffer[], command_parameters* p);
+static void process_unsigned_1( byte_stream* stream, byte parameter_buffer[], command_parameters* p);
+static void process_signed_2(   byte_stream* stream, byte parameter_buffer[], command_parameters* p);
+static void process_unsigned_2( byte_stream* stream, byte parameter_buffer[], command_parameters* p);
+static void process_signed_3(   byte_stream* stream, byte parameter_buffer[], command_parameters* p);
+static void process_unsigned_3( byte_stream* stream, byte parameter_buffer[], command_parameters* p);
+static void process_4(          byte_stream* stream, byte parameter_buffer[], command_parameters* p);
+static void process_44(         byte_stream* stream, byte parameter_buffer[], command_parameters* p);
+static void process_44444444444(byte_stream* stream, byte parameter_buffer[], command_parameters* p);
+static void process_string_1(   byte_stream* stream, byte parameter_buffer[], command_parameters* p);
+static void process_string_2(   byte_stream* stream, byte parameter_buffer[], command_parameters* p);
+static void process_string_3(   byte_stream* stream, byte parameter_buffer[], command_parameters* p);
+static void process_string_4(   byte_stream* stream, byte parameter_buffer[], command_parameters* p);
+static void process_font_1(     byte_stream* stream, byte parameter_buffer[], command_parameters* p);
+static void process_font_2(     byte_stream* stream, byte parameter_buffer[], command_parameters* p);
+static void process_font_3(     byte_stream* stream, byte parameter_buffer[], command_parameters* p);
+static void process_font_4(     byte_stream* stream, byte parameter_buffer[], command_parameters* p);
+static void process_pre(        byte_stream* stream, byte parameter_buffer[], command_parameters* p);
+static void process_post(       byte_stream* stream, byte parameter_buffer[], command_parameters* p);
+static void process_post_post(  byte_stream* stream, byte parameter_buffer[], command_parameters* p);
+
+
+
+/**** Just a few of the dvi opcodes are needed explicitly ****/
+enum opcode
+ { opcode_fnt_num_0  = 171,
+   opcode_fnt_num_63 = 234,
+   opcode_post_post  = 249
+ };
+
+
+/**** Raw parameters: types and sizes ****/
+
+enum { ParametersTypes = 21 };  /* valid types - 'undefined' doesn't count */
+
+enum parameters_type
+ { p_none,
+   p_signed_1, p_unsigned_1,
+   p_signed_2, p_unsigned_2,
+   p_signed_3, p_unsigned_3,
+   p_4, p_44, p_44444444444,
+   p_string_1, p_string_2,
+   p_string_3, p_string_4,
+   p_font_1, p_font_2, p_font_3, p_font_4,
+   p_pre, p_post, p_post_post,
+   p_undefined                   /* undefined must be last */
+ };
+
+enum { ParametersSizeMax = 44 };
+
+const static char parameters_size[] =
+ { 0,1,1,2,2,3,3,4,
+   4+4,4*11,
+   1,2,3,4,         /* string_? */
+   1+4+4+4+1+1, 2+4+4+4+1+1, 3+4+4+4+1+1, 4+4+4+4+1+1, /* fnt_def_? */
+   1+4+4+4+1,       /* pre */
+   4+4+4+4+4+4+2+2, /* post */
+   4+1,             /* post_post */
+ };
+
+
+
+/**** A table indexed by a 'parameters_type' giving a function to process raw parameters ****/
+
+static void (* const parameters_process[])(byte_stream* stream, byte parameter_buffer[], command_parameters* p) =
+ { NULL,
+   process_signed_1, process_unsigned_1,
+   process_signed_2, process_unsigned_2,
+   process_signed_3, process_unsigned_3,
+   process_4,
+   process_44,
+   process_44444444444,
+   process_string_1, process_string_2,
+   process_string_3, process_string_4,
+   process_font_1, process_font_2,
+   process_font_3, process_font_4,
+   process_pre, process_post, process_post_post
+ };
+
+
+/**** A table giving the parameter types of the dvi opcodes (starting with 128) ****/
+
+/* N.B. 'char' used to give compact storage of table */
+const static char opcode_parameters[] =
+ { p_unsigned_1,   /* set1 */
+   p_unsigned_2,   /* set2 */
+   p_unsigned_3,   /* set3 */
+   p_4,            /* set4 */
+   p_44,           /* set_rule */
+   p_unsigned_1,   /* put1 */
+   p_unsigned_2,   /* put2 */
+   p_unsigned_3,   /* put3 */
+   p_4,            /* put4 */
+   p_44,           /* put_rule */
+   p_none,         /* nop */
+   p_44444444444,  /* bop */
+   p_none,         /* eop */
+   p_none,         /* push */
+   p_none,         /* pop */
+   p_signed_1,     /* right1 */
+   p_signed_2,     /* right2 */
+   p_signed_3,     /* right3 */
+   p_4,            /* right4 */
+   p_none,         /* w0 */
+   p_signed_1,     /* w1 */
+   p_signed_2,     /* w2 */
+   p_signed_3,     /* w3 */
+   p_4,            /* w4 */
+   p_none,         /* x0 */
+   p_signed_1,     /* x1 */
+   p_signed_2,     /* x2 */
+   p_signed_3,     /* x3 */
+   p_4,            /* x4 */
+   p_signed_1,     /* down1 */
+   p_signed_2,     /* down2 */
+   p_signed_3,     /* down3 */
+   p_4,            /* down4 */
+   p_none,         /* y0 */
+   p_signed_1,     /* y1 */
+   p_signed_2,     /* y2 */
+   p_signed_3,     /* y3 */
+   p_4,            /* y4 */
+   p_none,         /* z0 */
+   p_signed_1,     /* z1 */
+   p_signed_2,     /* z2 */
+   p_signed_3,     /* z3 */
+   p_4,            /* z4 */
+
+   /* font_num_0 to font_num_63 */
+   p_none,  p_none,  p_none,  p_none,  p_none,  p_none,  p_none,  p_none,
+   p_none,  p_none,  p_none,  p_none,  p_none,  p_none,  p_none,  p_none,
+   p_none,  p_none,  p_none,  p_none,  p_none,  p_none,  p_none,  p_none,
+   p_none,  p_none,  p_none,  p_none,  p_none,  p_none,  p_none,  p_none,
+   p_none,  p_none,  p_none,  p_none,  p_none,  p_none,  p_none,  p_none,
+   p_none,  p_none,  p_none,  p_none,  p_none,  p_none,  p_none,  p_none,
+   p_none,  p_none,  p_none,  p_none,  p_none,  p_none,  p_none,  p_none,
+   p_none,  p_none,  p_none,  p_none,  p_none,  p_none,  p_none,  p_none,
+
+   p_unsigned_1,   /* fnt1 */
+   p_unsigned_2,   /* fnt2 */
+   p_unsigned_3,   /* fnt3 */
+   p_4,            /* fnt4 */
+   p_string_1,     /* xxxx1 */
+   p_string_2,     /* xxxx2 */
+   p_string_3,     /* xxxx3 */
+   p_string_4,     /* xxxx4 */
+   p_font_1,       /* fnt_def1 */
+   p_font_2,       /* fnt_def2 */
+   p_font_3,       /* fnt_def3 */
+   p_font_4,       /* fnt_def4 */
+   p_pre,
+   p_post,
+   p_post_post,
+
+   /* opcodes 250-255 are undefined */
+   p_undefined, p_undefined, p_undefined, p_undefined, p_undefined, p_undefined
+ };
+
+
+/**** A table giving the high-level command type of the dvi opcodes (starting with 128) ****/
+
+const static char opcode_command[] =
+ { command_set, command_set, command_set, command_set,  /* set1, set2, set3, set4 */
+   command_set_rule,                                    /* set_rule */
+   command_put, command_put, command_put, command_put,  /* put1, put2, put3, put4 */
+   command_put_rule,                                    /* put_rule */
+   command_nop,                                         /* nop */
+   command_bop,                                         /* bop */
+   command_eop,                                         /* eop */
+   command_push,                                        /* push */
+   command_pop,                                         /* pop */
+   command_right, command_right, command_right, command_right,  /* right1, right2, right3, right4 */
+   command_w0,                                          /* w0 */
+   command_w, command_w, command_w, command_w,          /* w1, w2, w3, w4 */
+   command_x0,                                          /* x0 */
+   command_x, command_x, command_x, command_x,          /* x1, x2, x3, x4 */
+   command_down, command_down, command_down, command_down, /* down1, down2, down3, down4 */
+   command_y0,                                          /* y0 */
+   command_y, command_y, command_y, command_y,          /* y1, y2, y3, y4 */
+   command_z0,                                          /* z0 */
+   command_z, command_z, command_z, command_z,          /* z1, z2, z3, z4 */
+
+   /* font_num_0 to font_num_63 */
+   command_fnt, command_fnt, command_fnt, command_fnt, command_fnt, command_fnt, command_fnt, command_fnt,
+   command_fnt, command_fnt, command_fnt, command_fnt, command_fnt, command_fnt, command_fnt, command_fnt,
+   command_fnt, command_fnt, command_fnt, command_fnt, command_fnt, command_fnt, command_fnt, command_fnt,
+   command_fnt, command_fnt, command_fnt, command_fnt, command_fnt, command_fnt, command_fnt, command_fnt,
+   command_fnt, command_fnt, command_fnt, command_fnt, command_fnt, command_fnt, command_fnt, command_fnt,
+   command_fnt, command_fnt, command_fnt, command_fnt, command_fnt, command_fnt, command_fnt, command_fnt,
+   command_fnt, command_fnt, command_fnt, command_fnt, command_fnt, command_fnt, command_fnt, command_fnt,
+   command_fnt, command_fnt, command_fnt, command_fnt, command_fnt, command_fnt, command_fnt, command_fnt,
+
+   command_fnt, command_fnt, command_fnt, command_fnt,                 /* fnt1, fnt2, fnt3, fnt4 */
+   command_xxx, command_xxx, command_xxx, command_xxx,                 /* xxx1, xxx2, xxx3, xxx4 */
+   command_fnt_def, command_fnt_def, command_fnt_def, command_fnt_def, /* fnt_def1, fnt_def2, fnt_def3, fnt_def4 */
+   command_pre,
+   command_post,
+   command_post_post
+ };
+
+
+
+
+
+
+#ifndef NDEBUG
+
+#define num_elements(array) (sizeof(array)/sizeof(array[0]))
+
+static void dviops_debug_checks(void)
+ { static bool checked = FALSE;
+   if (!checked)
+    { unsigned i, max_parameters_size;
+      checked = TRUE;
+
+      /**** check size of tables and enums ****/
+      assert(p_undefined == ParametersTypes);
+      assert(num_elements(parameters_process) == ParametersTypes);
+      assert(num_elements(parameters_size) == ParametersTypes);
+      assert(num_elements(opcode_parameters) == 128);
+      assert(num_elements(opcode_command) == opcode_post_post-128+1);
+
+      /**** find largest parameters and check hard-wired value is correct ****/
+      max_parameters_size = parameters_size[0];
+      for (i=1; i < ParametersTypes; i++)
+       { if (parameters_size[i] > max_parameters_size)
+          { max_parameters_size = parameters_size[i];
+          }
+       }
+      assert(max_parameters_size == ParametersSizeMax);
+
+      /**** check opcode commands and parameter types seem sensible ****/
+      for (i=0; i < num_elements(opcode_command); i++)
+       { enum parameters_type p = (enum parameters_type) opcode_parameters[i];
+         switch(opcode_command[i])
+          { case command_set:      assert(p == p_unsigned_1 || p == p_unsigned_2 || p == p_unsigned_3 || p == p_4); break;
+            case command_set_rule: assert(p == p_44); break;
+            case command_put:      assert(p == p_unsigned_1 || p == p_unsigned_2 || p == p_unsigned_3 || p == p_4); break;
+            case command_put_rule: assert(p == p_44); break;
+            case command_nop:      assert(p == p_none); break;
+            case command_bop:      assert(p == p_44444444444); break;
+            case command_eop:      assert(p == p_none); break;
+            case command_push:     assert(p == p_none); break;
+            case command_pop:      assert(p == p_none); break;
+            case command_right:    assert(p == p_signed_1 || p == p_signed_2 || p == p_signed_3 || p == p_4); break;
+            case command_w0:       assert(p == p_none); break;
+            case command_w:        assert(p == p_signed_1 || p == p_signed_2 || p == p_signed_3 || p == p_4); break;
+            case command_x0:       assert(p == p_none); break;
+            case command_x:        assert(p == p_signed_1 || p == p_signed_2 || p == p_signed_3 || p == p_4); break;
+            case command_down:     assert(p == p_signed_1 || p == p_signed_2 || p == p_signed_3 || p == p_4); break;
+            case command_y0:       assert(p == p_none); break;
+            case command_y:        assert(p == p_signed_1 || p == p_signed_2 || p == p_signed_3 || p == p_4); break;
+            case command_z0:       assert(p == p_none); break;
+            case command_z:        assert(p == p_signed_1 || p == p_signed_2 || p == p_signed_3 || p == p_4); break;
+            case command_fnt:      assert(p == p_none || p == p_unsigned_1 || p == p_unsigned_2 || p == p_unsigned_3 || p == p_4); break;
+            case command_xxx:      assert(p == p_string_1 || p == p_string_2 || p == p_string_3 || p == p_string_4); break;
+            case command_fnt_def:  assert(p == p_font_1 || p == p_font_2 || p == p_font_3 || p == p_font_4); break;
+            case command_pre:      assert(p == p_pre); break;
+            case command_post:     assert(p == p_post); break;
+            case command_post_post:assert(p == p_post_post); break;
+            default: assert(FALSE); /* Unknown command */
+          }
+       }
+      for (i = num_elements(opcode_command); i<128; i++)
+       { assert(opcode_parameters[i] == p_undefined);
+       }
+    }
+ }
+#else
+#define dviops_debug_checks()
+#endif
+
+
+
+
+#if !defined(NDEBUG) && defined(DVIOPS_DEBUG)
+/**** Table of command names ****/
+
+enum debug_parameters { dp_none, dp_char, dp_dist, dp_font, dp_string, dp_rule, dp_bop, dp_def, dp_pre, dp_post, dp_post_post};
+
+static struct
+ { const char*           name;
+   enum debug_parameters p;
+ }
+debug_command_info[] =
+  { {"set",  dp_char}, {"set_rule",dp_rule},{"put",dp_char},{"put_rule",dp_rule},
+    {"nop",  dp_none}, {"bop", dp_bop},     {"eop",dp_none},
+    {"push", dp_none}, {"pop", dp_none},
+    {"right",dp_dist}, {"w0",  dp_none},    {"w",  dp_dist}, {"x0",dp_none}, {"x",dp_dist},
+    {"down", dp_dist}, {"y0",  dp_none},    {"y",  dp_dist}, {"z0",dp_none}, {"z",dp_dist},
+    {"fnt",  dp_font}, {"xxx", dp_string},  {"fnt_def",dp_def},
+    {"pre",  dp_pre},  {"post",dp_post},    {"post_post",dp_post_post}
+  };
+
+
+static void dviops_debug_output_command(const command* c)
+ { assert(c->code <= command_post_post);
+   assert(num_elements(debug_command_info) == command_post_post+1);
+
+   fputs(debug_command_info[c->code].name, stderr);
+   fputc(' ', stderr);
+   switch(debug_command_info[c->code].p)
+    { case dp_none:   break;
+      case dp_char:   fputc(c->parameters.character, stderr);         break;
+      case dp_dist:   fprintf(stderr, "%d", c->parameters.distance);  break;
+      case dp_font:   fprintf(stderr, "%d", c->parameters.font_no);   break;
+      case dp_string: fputs(c->parameters.string, stderr);            break;
+      case dp_rule:   fprintf(stderr, "%d,%d", c->parameters.rule.width, c->parameters.rule.height); break;
+      case dp_def:    fprintf(stderr, "%d %s...", c->parameters.font_def.font_no, c->parameters.font_def.font_name); break;
+      case dp_bop:
+      case dp_pre:
+      case dp_post:
+      case dp_post_post: fputs("...", stderr);  /* Don't worry about the details of these commands */
+    }
+   fputc('\n', stderr);
+ }
+#else
+#define dviops_debug_output_command(c)
+#endif
+
+
+
+void dviops_read_command(byte_stream* stream, command* c)
+ { byte parameter_buffer[ParametersSizeMax];
+   byte opcode;
+   enum parameters_type p_type;
+
+   dviops_debug_checks();
+   assert(c);
+
+   byte_stream_read(stream, &opcode, 1);
+   if (opcode < 128)
+    { /* Convert set_char_? commands into set commands */
+      c->code = command_set;
+      c->parameters.character = opcode;
+    }
+   else
+    { /* Commands that aren't set_char_? */
+      c->code = (command_code) opcode_command[opcode-128];
+      p_type = (enum parameters_type) opcode_parameters[opcode-128];
+
+      if (p_type != p_undefined)
+       { /* If no parameters check for font_num_? commands */
+         if (p_type == p_none)
+          { if (opcode >= opcode_fnt_num_0 && opcode <= opcode_fnt_num_63)
+             { c->parameters.font_no = opcode - opcode_fnt_num_0;
+             }
+          }
+         else
+          { /* Read and process parameters */
+            byte_stream_read(stream, parameter_buffer, parameters_size[p_type]);
+            parameters_process[p_type] (stream, parameter_buffer, &c->parameters);
+          }
+       }
+    }
+
+   dviops_debug_output_command(c);
+ }
+
+
+
+
+void dviops_command_finished(command* c)
+ { assert(c);
+   switch(c->code)
+    { case command_xxx:
+        memory_free(c->parameters.string);
+        break;
+
+      case command_fnt_def:
+        memory_free(c->parameters.font_def.font_name);
+        memory_free(c->parameters.font_def.area_name); /* Might be NULL - but it's OK to free NULLs */
+        break;
+    }
+ }
+
+
+
+
+void dviops_find_post_postamble(byte_stream* stream)
+ { unsigned pos;
+   byte     b;
+
+   /* Find post_post command */
+
+   /* Skip over '223' bytes padding at end-of-byte_stream */
+   pos = byte_stream_extent(stream)-1;  /* Start at last byte */
+   do
+    { byte_stream_read_at(stream, &b, 1, --pos);
+    }
+   while(b == 223);
+   /* pos now points to last byte of post_post parameters */
+
+   /* skip over parameters (so pos points to post_post opcode byte) */
+   pos -= parameters_size[opcode_parameters[opcode_post_post-128]];
+   byte_stream_set_position(stream, pos);
+ }
+
+
+
+
+
+/**** Routines to convert a sequence of bytes into a signed or unsigned number ****/
+
+#ifdef DVIOPS_FUNCTIONS
+
+static int bytes_to_unsigned_1(byte b[])
+ { return b[0];
+ }
+
+static int bytes_to_signed_1(byte b[])
+ { int msb = b[0];
+   if (msb >= 128)
+    { msb -= 256;
+    }
+   return msb;
+ }
+
+static int bytes_to_unsigned_2(byte b[])
+ { return b[0]*256 + b[1];
+ }
+
+static int bytes_to_signed_2(byte b[])
+ { int msb = b[0];
+   if (msb >= 128)
+    { msb = msb - 256;
+    }
+   return msb*256 + b[1];
+ }
+
+static int bytes_to_unsigned_3(byte b[])
+ { return (b[0]*256 + b[1])*256 + b[2];
+ }
+
+static int bytes_to_signed_3(byte b[])
+ { int msb = b[0];
+   if (msb >= 128)
+    { msb = msb - 256;
+    }
+   return (msb*256 + b[1])*256 + b[2];
+ }
+
+static int bytes_to_4(byte b[])
+ { return (b[0] << 24) | (b[1] << 16) | (b[2] <<  8) | b[3];
+ }
+
+#else
+
+/** The functions above defined as macros (better for speed and code size) **/
+/** Oh for an 'inline' facility ! */
+#define bytes_to_unsigned_1(b) ((b)[0])
+#define bytes_to_unsigned_2(b) ((b)[0]*256 + (b)[1])
+#define bytes_to_unsigned_3(b) (((b)[0]*256 + (b)[1])*256 + (b)[2])
+#define bytes_to_signed_1(b) ((b)[0] >= 128 ? (b)[0]-256 : (b)[0])
+#define bytes_to_signed_2(b) (((b)[0] >= 128 ? (b)[0]-256 : (b)[0])*256 + (b)[1])
+#define bytes_to_signed_3(b) ((((b)[0] >= 128 ? (b)[0]-256 : (b)[0])*256 + (b)[1])*256 + (b)[2])
+#define bytes_to_4(b) (((b)[0] << 24) | ((b)[1] << 16) | ((b)[2] <<  8) | (b)[3])
+
+#endif
+
+
+
+
+/**** Routines that turn a parameter buffer (raw bytes) into high level command parameters ****/
+
+static void process_signed_1(byte_stream* stream, byte parameter_buffer[], command_parameters* p)
+ { assert(p);
+   assert(parameter_buffer);
+   NOT_USED(stream);
+
+   p->distance = bytes_to_signed_1(&parameter_buffer[0]);
+ }
+
+
+
+
+static void process_unsigned_1(byte_stream* stream, byte parameter_buffer[], command_parameters* p)
+ { assert(p);
+   assert(parameter_buffer);
+   NOT_USED(stream);
+
+   p->distance = bytes_to_unsigned_1(&parameter_buffer[0]);
+ }
+
+
+
+
+static void process_signed_2(byte_stream* stream, byte parameter_buffer[], command_parameters* p)
+ { assert(p);
+   assert(parameter_buffer);
+   NOT_USED(stream);
+
+   p->distance = bytes_to_signed_2(&parameter_buffer[0]);
+ }
+
+
+
+
+static void process_unsigned_2(byte_stream* stream, byte parameter_buffer[], command_parameters* p)
+ { assert(p);
+   assert(parameter_buffer);
+   NOT_USED(stream);
+
+   p->distance = bytes_to_unsigned_2(&parameter_buffer[0]);
+ }
+
+
+
+
+static void process_signed_3(byte_stream* stream, byte parameter_buffer[], command_parameters* p)
+ { assert(p);
+   assert(parameter_buffer);
+   NOT_USED(stream);
+
+   p->distance = bytes_to_signed_3(&parameter_buffer[0]);
+ }
+
+
+
+
+static void process_unsigned_3(byte_stream* stream, byte parameter_buffer[], command_parameters* p)
+ { assert(p);
+   assert(parameter_buffer);
+   NOT_USED(stream);
+
+   p->distance = bytes_to_unsigned_3(&parameter_buffer[0]);
+ }
+
+
+
+
+static void process_4(byte_stream* stream, byte parameter_buffer[], command_parameters* p)
+ { assert(p);
+   assert(parameter_buffer);
+   NOT_USED(stream);
+
+   p->distance = bytes_to_4(&parameter_buffer[0]);
+ }
+
+
+
+
+static void process_44(byte_stream* stream, byte parameter_buffer[], command_parameters* p)
+ { assert(p);
+   assert(parameter_buffer);
+   NOT_USED(stream);
+
+   p->rule.height = bytes_to_4(&parameter_buffer[0]);
+   p->rule.width  = bytes_to_4(&parameter_buffer[4]);
+ }
+
+
+
+static void process_44444444444(byte_stream* stream, byte parameter_buffer[], command_parameters* p)
+ { int i;
+
+   assert(p);
+   assert(parameter_buffer);
+   NOT_USED(stream);
+
+   for (i=0; i<10; i++)
+    { p->bop.count[i] = bytes_to_4(parameter_buffer);
+      parameter_buffer += 4;
+    }
+   p->bop.pointer = bytes_to_4(parameter_buffer);
+ }
+
+
+
+
+static void process_string_x(byte_stream* stream, unsigned string_length, command_parameters* p)
+ { p->string = memory_allocate(string_length+1);
+   try
+    { byte_stream_read(stream, p->string, string_length);
+      p->string[string_length] = '\0';
+    }
+   catch
+    { memory_free(p->string);
+      throw();
+    }
+   catch_end
+ }
+
+
+
+
+static void process_string_1(byte_stream* stream, byte parameter_buffer[], command_parameters* p)
+ { assert(p);
+   assert(parameter_buffer);
+
+   process_string_x(stream, bytes_to_unsigned_1(&parameter_buffer[0]), p);
+ }
+
+
+
+
+static void process_string_2(byte_stream* stream, byte parameter_buffer[], command_parameters* p)
+ { assert(p);
+   assert(parameter_buffer);
+
+   process_string_x(stream, bytes_to_unsigned_2(&parameter_buffer[0]), p);
+ }
+
+
+
+
+static void process_string_3(byte_stream* stream, byte parameter_buffer[], command_parameters* p)
+ { assert(p);
+   assert(parameter_buffer);
+
+   process_string_x(stream, bytes_to_unsigned_3(&parameter_buffer[0]), p);
+ }
+
+
+
+
+static void process_string_4(byte_stream* stream, byte parameter_buffer[], command_parameters* p)
+ { assert(p);
+   assert(parameter_buffer);
+
+   process_string_x(stream, bytes_to_4(&parameter_buffer[0]), p);
+ }
+
+
+
+
+static void process_font_x(byte_stream* stream, byte parameter_buffer[], command_parameters* p)
+ { int area_name_length;
+   int font_name_length;
+
+   p->font_def.checksum    = bytes_to_4(&parameter_buffer[0]);
+   p->font_def.scale       = bytes_to_4(&parameter_buffer[4]);
+   p->font_def.design_size = bytes_to_4(&parameter_buffer[8]);
+   area_name_length        = bytes_to_unsigned_1(&parameter_buffer[12]);
+   font_name_length        = bytes_to_unsigned_1(&parameter_buffer[13]);
+
+   /* Initialise names so it's OK to free them */
+   p->font_def.area_name = NULL;
+   p->font_def.font_name = NULL;
+
+   try
+    { if (area_name_length > 0)
+       { p->font_def.area_name = memory_allocate(area_name_length+1);
+         byte_stream_read(stream, p->font_def.area_name, area_name_length);
+         p->font_def.area_name[area_name_length] = '\0';
+       }
+
+      p->font_def.font_name = memory_allocate(font_name_length+1);
+      byte_stream_read(stream, p->font_def.font_name, font_name_length);
+      p->font_def.font_name[font_name_length] = '\0';
+    }
+   catch
+    { memory_free(p->font_def.font_name);
+      memory_free(p->font_def.area_name);
+      throw();
+    }
+   catch_end
+ }
+
+
+
+
+static void process_font_1(byte_stream* stream, byte parameter_buffer[], command_parameters* p)
+ { assert(p);
+   assert(parameter_buffer);
+
+   p->font_def.font_no = bytes_to_unsigned_1(&parameter_buffer[0]);
+   process_font_x(stream, parameter_buffer+1, p);
+ }
+
+
+
+
+static void process_font_2(byte_stream* stream, byte parameter_buffer[], command_parameters* p)
+ { assert(p);
+   assert(parameter_buffer);
+   p->font_def.font_no = bytes_to_unsigned_2(&parameter_buffer[0]);
+   process_font_x(stream, parameter_buffer+2, p);
+ }
+
+
+
+
+static void process_font_3(byte_stream* stream, byte parameter_buffer[], command_parameters* p)
+ { assert(p);
+   assert(parameter_buffer);
+
+   p->font_def.font_no = bytes_to_unsigned_3(&parameter_buffer[0]);
+   process_font_x(stream, parameter_buffer+3, p);
+ }
+
+
+
+
+static void process_font_4(byte_stream* stream, byte parameter_buffer[], command_parameters* p)
+ { assert(p);
+   assert(parameter_buffer);
+
+   p->font_def.font_no = bytes_to_4(&parameter_buffer[0]);
+   process_font_x(stream, parameter_buffer+4, p);
+ }
+
+
+
+
+static void process_pre(byte_stream* stream, byte parameter_buffer[], command_parameters* p)
+ { unsigned skip;
+   unsigned pos;
+
+   assert(p);
+   assert(parameter_buffer);
+
+   p->preamble.id            = bytes_to_4(&parameter_buffer[0]);
+   p->preamble.numerator     = bytes_to_4(&parameter_buffer[4]);
+   p->preamble.denominator   = bytes_to_4(&parameter_buffer[8]);
+   p->preamble.magnification = bytes_to_4(&parameter_buffer[12]);
+
+   /* Skip over comment string in byte_stream */
+   skip = bytes_to_unsigned_1(&parameter_buffer[16]);
+   pos = byte_stream_get_position(stream);
+   byte_stream_set_position(stream, pos+skip);
+}
+
+
+
+
+static void process_post(byte_stream* stream, byte parameter_buffer[], command_parameters* p)
+ { assert(p);
+   assert(parameter_buffer);
+   NOT_USED(stream);
+
+   p->postamble.pointer       = bytes_to_4(&parameter_buffer[0]);
+   p->postamble.numerator     = bytes_to_4(&parameter_buffer[4]);
+   p->postamble.denominator   = bytes_to_4(&parameter_buffer[8]);
+   p->postamble.magnification = bytes_to_4(&parameter_buffer[12]);
+   p->postamble.height        = bytes_to_4(&parameter_buffer[16]);
+   p->postamble.width         = bytes_to_4(&parameter_buffer[20]);
+   p->postamble.stack_depth   = bytes_to_unsigned_2(&parameter_buffer[24]);
+   p->postamble.pages         = bytes_to_unsigned_2(&parameter_buffer[26]);
+ }
+
+
+
+
+static void process_post_post(byte_stream* stream, byte parameter_buffer[], command_parameters* p)
+ { assert(p);
+   assert(parameter_buffer);
+   NOT_USED(stream);
+
+   p->post_postamble.pointer  = bytes_to_4(&parameter_buffer[0]);
+   p->post_postamble.id       = bytes_to_unsigned_1(&parameter_buffer[4]);
+ }

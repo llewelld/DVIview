@@ -1,0 +1,104 @@
+/*** ci_string.c ***/
+/* Case insensitive string operations
+ * (c) Paul Field
+ */
+
+#include "ci_string.h"
+
+#include <assert.h>
+#include <ctype.h>
+
+
+
+int case_insensitive_strcmp(const char* s1, const char* s2)
+ { assert(s1 != NULL);
+   assert(s2 != NULL);
+
+   while(*s1 != '\0' && toupper(*s1) == toupper(*s2))
+    { s1++;
+      s2++;
+    }
+
+   if (*s1 < *s2)
+    { return -1;
+    }
+   if (*s1 == *s2)
+    { return 0;
+    }
+   return 1;
+ }
+
+
+
+
+int case_insensitive_strncmp(const char* s1, const char* s2, size_t n)
+ { assert(s1 != NULL);
+   assert(s2 != NULL);
+
+   while(n > 0 && *s1 != '\0' && toupper(*s1) == toupper(*s2))
+    { s1++;
+      s2++;
+      n--;
+    }
+
+   if (n == 0 || *s1 == *s2)
+    { return 0;
+    }
+   if (*s1 < *s2)
+    { return -1;
+    }
+   return 1;
+ }
+
+
+
+#ifdef TEST_CI_STRING
+#include <stdio.h>
+
+#undef NDEBUG
+#include <assert.h>
+
+
+int main(void)
+ { /* test strcmp() */
+
+   assert(case_insensitive_strcmp("a","a") == 0);
+   assert(case_insensitive_strcmp("a","b") < 0);
+   assert(case_insensitive_strcmp("b","a") > 0);
+
+   assert(case_insensitive_strcmp("abc","abc") == 0);
+   assert(case_insensitive_strcmp("abc","abd") < 0);
+   assert(case_insensitive_strcmp("abd","abc") > 0);
+
+   assert(case_insensitive_strcmp("ab","abc") < 0);
+   assert(case_insensitive_strcmp("ab","aab") > 0);
+   assert(case_insensitive_strcmp("aaa","ab") < 0);
+   assert(case_insensitive_strcmp("aba","ab") > 0);
+
+
+   /* test strncmp() */
+
+   /* Check strcmp-like behaviour (i.e. strings shorter than n) */
+   assert(case_insensitive_strncmp("a","a",5) == 0);
+   assert(case_insensitive_strncmp("a","b",5) < 0);
+   assert(case_insensitive_strncmp("b","a",5) > 0);
+
+   assert(case_insensitive_strncmp("abc","abc",5) == 0);
+   assert(case_insensitive_strncmp("abc","abd",5) < 0);
+   assert(case_insensitive_strncmp("abd","abc",5) > 0);
+
+   assert(case_insensitive_strncmp("ab","abc",5) < 0);
+   assert(case_insensitive_strncmp("ab","aab",5) > 0);
+   assert(case_insensitive_strncmp("aaa","ab",5) < 0);
+   assert(case_insensitive_strncmp("aba","ab",5) > 0);
+
+   /* Test where strings are 'truncated' by n */
+   assert(case_insensitive_strncmp("a","b", 0) == 0);
+   assert(case_insensitive_strncmp("aa","ab",1) == 0);
+   assert(case_insensitive_strncmp("aa","ab",2) < 0);
+   assert(case_insensitive_strncmp("ab","aa",2) > 0);
+
+   return 0;
+ }
+
+#endif

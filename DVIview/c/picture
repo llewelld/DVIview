@@ -1,0 +1,434 @@
+/*** picture.c ***/
+/* A picture is some form of graphic stored in a file.
+ * Currently supported graphics are: Sprite, Draw, JPEG
+ * (c) Paul Field 1996
+ */
+
+/* The picture object is simply responsible for routing
+ * picture calls to the appropriate 'real' picture type
+ */
+
+
+#include "picture.h"
+
+#include <stdio.h>
+
+#include "jpeg.h"
+#include "osfile.h"
+
+#include "allocate.h"
+#include "box.h"
+#include "exception.h"
+#include "list.h"
+#include "message.h"
+
+#include "pic_draw.h"
+#include "pic_sprite.h"
+#include "pic_jpeg.h"
+#include "units.h"
+
+
+/* Constant used for debugging: insert 'assert(NeverReachHere)'
+ * at points which should never be executed
+ */
+enum { NeverReachHere = FALSE };
+
+enum { PictureBorder = 2*DrawinOS };  /* A border of 2 OS Units is placed around pictures for safety */
+
+
+
+
+typedef enum picture_type_enum
+ { picture_sprite,
+   picture_jpeg,
+   picture_drawfile
+ }picture_type;
+
+
+struct picture_str
+ { picture_type type;
+   union
+    { sprite_pic *sprite;
+      jpeg_pic   *jpeg;
+      draw_pic   *draw;
+    }data;
+
+   unsigned scale_x;  /* percent */
+   unsigned scale_y;  /* percent */
+   os_box   clip;
+   int      x;        /* bottom left of picture */
+   int      y;
+ };
+
+
+
+
+
+static void picture_size(const picture* pic, unsigned* width, unsigned* height)
+ { assert(pic != NULL);
+   assert(width != NULL);
+   assert(height != NULL);
+
+   switch(pic->type)
+    { case picture_drawfile:
+        draw_pic_size(pic->data.draw, width, height);
+        break;
+
+      case picture_sprite:
+        sprite_pic_size(pic->data.sprite, width, height);
+        break;
+
+      case picture_jpeg:
+        jpeg_pic_size(pic->data.jpeg, width, height);
+        break;
+
+      default:
+        assert(NeverReachHere);
+    }
+ }
+
+
+
+
+picture* picture_construct
+ ( const char*   file_name,
+   unsigned      scale_percent_x,
+   unsigned      scale_percent_y,
+   const os_box* clip,
+   int           x,
+   int           y
+ )
+ { picture* pic;
+
+   assert(file_name != NULL);
+
+   pic = list_alloc_element(sizeof(picture));
+
+   try
+    { bits     file_type;
+      unsigned width;
+      unsigned height;
+
+      if (osfile_read_stamped_no_path(file_name, NULL, NULL, NULL, NULL, &file_type) == fileswitch_NOT_FOUND)
+       { throw_string(message_lookup_and_substitute("NoFile", file_name, NULL, NULL, NULL));
+       }
+
+      switch(file_type)
+       {  case osfile_TYPE_DRAW:
+           pic->type = picture_drawfile;
+           pic->data.draw = draw_pic_construct(file_name);
+           break;
+
+          case osfile_TYPE_SPRITE:
+           pic->type = picture_sprite;
+           pic->data.sprite = sprite_pic_construct(file_name);
+           break;
+
+         case jpeg_FILE_TYPE:
+           pic->type = picture_jpeg;
+           pic->data.jpeg = jpeg_pic_construct(file_name);
+           break;
+
+         default:
+           throw_string(message_lookup_and_substitute("UnknownPicType", file_name, NULL, NULL, NULL));
+       }
+
+      /* Fill in pic info */
+      /* Note: (x,y) is the top left of the clipped picture,
+       * (pic->x, pic->y) is the bottom left of the unclipped picture
+       */
+      picture_size(pic, &width, &height);
+      pic->scale_x = scale_percent_x;
+      pic->scale_y = scale_percent_y;
+      pic->clip    = *clip;
+      pic->x       = x - clip->x0;
+      pic->y       = y + clip->y1 - (int)(height * pic->scale_y)/100;
+    }
+   catch
+    { list_free_element(pic);
+      throw();
+    }
+   catch_end
+
+   return pic;
+ }
+
+
+
+
+void picture_destruct(picture *pic)
+ { if (pic != NULL)
+    { switch(pic->type)
+       { case picture_drawfile:
+           draw_pic_destruct(pic->data.draw);
+           break;
+
+         case picture_sprite:
+           sprite_pic_destruct(pic->data.sprite);
+           break;
+
+         case picture_jpeg:
+           jpeg_pic_destruct(pic->data.jpeg);
+           break;
+
+         default:
+           assert(NeverReachHere);
+       }
+      list_free_element(pic);
+    }
+ }
+
+
+
+
+static void picture_set_graphics_window(const os_box* window)
+ { int x1;
+   int y1;
+
+   os_set_graphics_window();
+   os_writec(window->x0 % 256);  os_writec(window->x0 / 256);
+   os_writec(window->y0 % 256);  os_writec(window->y0 / 256);
+
+   /* Window's (x1,y1) are exclusive coordinates and we */
+   /* need inclusive ones for the graphics window       */
+   x1 = window->x1-1;
+   y1 = window->y1-1;
+   os_writec(x1 % 256);  os_writec(x1 / 256);
+   os_writec(y1 % 256);  os_writec(y1 / 256);
+ }
+
+
+
+
+static bool picture_calculate_clip_window
+ ( const picture* pic,
+   int            x,
+   int            y,
+   unsigned       scale_percent,
+   const os_box*  clip,
+   os_box*        new_clip
+ )
+ { picture_clipped_bounds(pic, x, y, scale_percent, new_clip);
+
+   /* Convert bounds to OS units */
+   new_clip->x0 /= DrawinOS;
+   new_clip->y0 /= DrawinOS;
+   new_clip->x1 /= DrawinOS;
+   new_clip->y1 /= DrawinOS;
+
+   return box_clip(clip, new_clip);
+ }
+
+
+
+
+void picture_draw(const picture* pic, int x, int y, unsigned scale_percent, const os_box* clip)
+ { os_box new_clip;
+
+   assert(pic != NULL);
+   assert(clip != NULL);
+
+   if (picture_calculate_clip_window(pic, x, y, scale_percent, clip, &new_clip))
+    { unsigned pic_x;
+      unsigned pic_y;
+      unsigned scale_x;
+      unsigned scale_y;
+
+      picture_set_graphics_window(&new_clip);
+
+      /* Calculate screen position of the picture */
+      pic_x = x + (pic->x * (int)scale_percent)/100;
+      pic_y = y + (pic->y * (int)scale_percent)/100;
+
+
+      /* Calculate the overall scaling */
+      scale_x = (scale_percent * pic->scale_x)/100;
+      scale_y = (scale_percent * pic->scale_y)/100;
+
+
+      /* Draw picture */
+      switch(pic->type)
+       { case picture_drawfile:
+           draw_pic_draw(pic->data.draw, pic_x, pic_y, scale_x, scale_y, clip);
+           break;
+
+        case picture_sprite:
+           sprite_pic_draw(pic->data.sprite, pic_x, pic_y, scale_x, scale_y, clip);
+           break;
+
+         case picture_jpeg:
+           jpeg_pic_draw(pic->data.jpeg, pic_x, pic_y, scale_x, scale_y, clip);
+           break;
+
+         default:
+           assert(NeverReachHere);
+       }
+
+      /* Reset clip window */
+      picture_set_graphics_window(clip);
+    }
+ }
+
+
+
+void picture_clipped_bounds(const picture* pic, int x, int y, unsigned scale_percent, os_box* bounds)
+ { picture_unclipped_bounds(pic, x, y, scale_percent, bounds);
+
+   bounds->x0 += (pic->clip.x0 * (int)scale_percent)/100;
+   bounds->y0 += (pic->clip.y0 * (int)scale_percent)/100;
+   bounds->x1 -= (pic->clip.x1 * (int)scale_percent)/100;
+   bounds->y1 -= (pic->clip.y1 * (int)scale_percent)/100;
+ }
+
+
+
+
+void picture_unclipped_bounds(const picture* pic, int x, int y, unsigned scale_percent, os_box* bounds)
+ { unsigned width;
+   unsigned height;
+   unsigned overall_scale_x;
+   unsigned overall_scale_y;
+   int      border;
+
+   assert(pic != NULL);
+   assert(bounds != NULL);
+
+   picture_size(pic, &width, &height);
+
+   border = (PictureBorder * scale_percent)/100;
+
+   overall_scale_x = (scale_percent * pic->scale_x)/100;
+   overall_scale_y = (scale_percent * pic->scale_y)/100;
+
+   bounds->x0 = x + (int)(scale_percent * pic->x)/100 - border;
+   bounds->y0 = y + (int)(scale_percent * pic->y)/100 - border;
+   bounds->x1 = bounds->x0 + (int)(width  * overall_scale_x)/100 + 2*border;
+   bounds->y1 = bounds->y0 + (int)(height * overall_scale_y)/100 + 2*border;
+ }
+
+
+
+
+void picture_add_fonts_to_set(const picture* pic, font_set* fonts)
+ { assert(pic != NULL);
+
+   if (pic->type == picture_drawfile)
+    { draw_pic_add_fonts_to_set(pic->data.draw, fonts);
+    }
+ }
+
+
+
+
+void picture_file_add_fonts_to_set(const char* file_name, font_set* fonts)
+ { bits file_type;
+
+   assert(file_name != NULL);
+   assert(fonts != NULL);
+
+   osfile_read_stamped_no_path(file_name, NULL, NULL, NULL, NULL, &file_type);
+
+   if (file_type == osfile_TYPE_DRAW)
+    { draw_pic_file_add_fonts_to_set(file_name, fonts);
+    }
+ }
+
+
+
+
+void picture_save(const picture* pic, int x, int y, const font_set* fonts)
+ { unsigned pic_x;
+   unsigned pic_y;
+
+   assert(pic != NULL);
+   assert(fonts != NULL);
+
+   /* Calculate screen position of the picture */
+   pic_x = x + pic->x;
+   pic_y = y + pic->y;
+
+
+   switch(pic->type)
+    { case picture_drawfile:
+        draw_pic_save(pic->data.draw, pic_x, pic_y, pic->scale_x, pic->scale_y, fonts);
+        break;
+
+      case picture_sprite:
+        sprite_pic_save(pic->data.sprite, pic_x, pic_y, pic->scale_x, pic->scale_y);
+        break;
+
+      case picture_jpeg:
+        jpeg_pic_save(pic->data.jpeg, pic_x, pic_y, pic->scale_x, pic->scale_y);
+        break;
+
+      default:
+        assert(NeverReachHere);
+    }
+ }
+
+
+
+
+unsigned picture_estimate_save_size(const picture* pic)
+ { assert(pic != NULL);
+
+   switch(pic->type)
+    { case picture_drawfile:
+        return draw_pic_estimate_save_size(pic->data.draw);
+        break;
+
+      case picture_sprite:
+        return sprite_pic_estimate_save_size(pic->data.sprite);
+        break;
+
+      case picture_jpeg:
+        return jpeg_pic_estimate_save_size(pic->data.jpeg);
+        break;
+
+      default:
+        assert(NeverReachHere);
+        return 0;
+    }
+ }
+
+
+
+
+#ifndef NDEBUG
+
+void picture_debug_output(const picture* pic)
+ { assert(pic != NULL);
+
+   switch(pic->type)
+    { case picture_drawfile:
+        draw_pic_debug_output(pic->data.draw);
+        break;
+
+      case picture_sprite:
+        sprite_pic_debug_output(pic->data.sprite);
+        break;
+
+      case picture_jpeg:
+        jpeg_pic_debug_output(pic->data.jpeg);
+        break;
+
+      default:
+        assert(NeverReachHere);
+    }
+
+   fprintf
+    ( stderr,
+      "   position (%u, %u)\n"
+      "   scale (%u%%,%u%%)\n"
+      "   clipping (%d,%d,%d,%d)\n",
+      pic->x,
+      pic->y,
+      pic->scale_x,
+      pic->scale_y,
+      pic->clip.x0,
+      pic->clip.y0,
+      pic->clip.x1,
+      pic->clip.y1
+    );
+ }
+#endif

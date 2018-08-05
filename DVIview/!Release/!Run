@@ -1,0 +1,4 @@
+RMEnsure DDEUtils 0 System:modules.ddeutils
+Prefix <Obey$Dir>
+Makatic.Medium @ CCExtra="-DNDEBUG -ff" ExtraLibs="ToolLib:o.ToolLib"
+Squeeze -v ^.!DVIview.!RunImage

@@ -1,0 +1,7 @@
+| !ToolLib
+| (c) Paul Field
+
+IF "<ToolLib$Path>" = "" THEN Set C$Path <C$Path>,ToolLib:
+
+Set ToolLib$Dir <Obey$Dir>
+Set ToolLib$Path <ToolLib$Dir>.

@@ -1,0 +1,513 @@
+/*** queue.c ***/
+/* Abstract data type :
+ *   Double ended queue
+ *   (with facilities for inserting mid-queue)
+ *   (not much of a queue at all really)
+ * (c) Paul Field
+ */
+
+#include "queue.h"
+
+#include <stdlib.h>
+#include <assert.h>
+
+/* Each element of the queue has a 'queue_element' secretly attached
+ * to them by 'queue_alloc_element'. This provides links forward and
+ * backwards along the queue.
+ */
+typedef struct queue_element_str queue_element;
+struct queue_element_str
+ { queue_element *next;  /* A link to the element one closer to the front of the queue (or NULL) */
+   queue_element *prev;  /* A link to the element one further from the front of the queue (or NULL) */
+#ifndef NDEBUG
+   void *qallocated;     /* Used by debugging code to flag that this was allocated by queue_alloc_element */
+#endif
+ };
+
+
+/* Macros that convert between 'elements', the object the outside world sees, and
+ * 'queue_elements' (see above) which are hidden except inside this module
+ */
+#define queue_TO_QUEUE_ELEMENT(e) ((queue_element *)((char *)(e)  - sizeof(queue_element)))
+#define queue_TO_ELEMENT(qe)      ((void *)((char *)(qe) + sizeof(queue_element)))
+
+
+/* A queue is a pointer to a queue_str */
+/* Note that if front==NULL (an empty queue) then end is undefined */
+struct queue_str
+ { queue_element *front;  /* The element at the front of the queue or NULL for an empty queue*/
+   queue_element *end;    /* The element at the end of the queue */
+#ifndef NDEBUG
+   void *qactive;         /* Used by debugging code to flag that this queue has not been destroyed */
+#endif
+ };
+
+
+#ifdef NDEBUG
+/* No debugging */
+#define qdbg_stats()
+#define qdbg_note_alloc(e)
+#define qdbg_note_dealloc(e)
+#define qdbg_note_queue_created(q)
+#define qdbg_note_queue_destroyed(q)
+#define qdbg_unqueue_element(e)
+#define qdbg_error(f,e)
+#define qdbg_check_element_unqueued(e,f)
+#define qdbg_check_queue_is_valid(q,f)
+#define qdbg_check_queue_ptr(qp,f)
+#define qdbg_check_queue_ptr_in_queue(q,qp,f)
+
+#else
+#include <stdio.h>
+  static queue_element magic;            /* A magic value for queue_element pointers */
+  static int           qalloc_magic;     /* A magic value to indicate queue_alloc-ed block */
+  static int           qactive_magic;    /* A magic value to indicate a queue is active (i.e. not destroyed) */
+  static int           qnotactive_magic; /* A magic value to indicate a queue is not active (i.e. has been destroyed) */
+  static unsigned allocates = 0;         /* Number of queue_alloc_element() - number queue_free_element() */
+  static unsigned queues = 0;            /* Number of queue_create() - number of queue_destroy() */
+  static bool exit_registered = FALSE;   /* TRUE once qdbg_stats has been registered with atexit() */
+
+  static void qdbg_stats(void);
+   /* If there are queues or queue elements still allocated, this outputs the number of each
+    */
+
+  static void qdbg_note_alloc(queue_element *element);
+   /* Notes that a queue element has been allocated. (Also installs qbg_stats
+    * to be called when the program exits, if it hasn't been installed already)
+    */
+
+  static void qdbg_note_dealloc(queue_element *element);
+   /* Notes that a queue element is about to be deallocated
+    */
+
+  static void qdbg_note_queue_created(queue *q);
+   /* Notes that a queue has been created. (Also installs qbg_stats
+    * to be called when the program exits, if it hasn't been installed already)
+    */
+
+  static void qdbg_note_queue_destroyed(queue *q);
+   /* Notes that a queue is about to be destroyed
+    */
+
+  static void qdbg_unqueue_element(queue_element *element);
+   /* Pre: Element has been removed from the queue
+    * Alters element so that it can be identified as not being in a queue
+    */
+
+  static void qdbg_error(const char *function, const char *error);
+   /* Reports an error that occured in function and then aborts
+    */
+
+  static void qdbg_check_element_unqueued(const queue_element *element, const char *function);
+   /* Checks that element can be added to a queue (i.e. it was allocated by queue_element_alloc
+    * as in not currently in a queue). Generates an error and aborts if it is not.
+    */
+
+  static void qdbg_check_queue_is_valid(const queue *q, const char *function);
+   /* Checks that q is a valid queue.
+    * If there is some problem with it and error is generated and abort() is called
+    */
+
+  static void qdbg_check_queue_ptr(queue_ptr qptr, const char *function);
+   /* Checks that qptr is valid. i.e. it is not NULL and the element it points to appears to
+    * be in a queue. If not an error is generated and abort() is called.
+    */
+
+  static void qdbg_check_queue_ptr_in_queue(const queue *q, queue_ptr qptr, const char *function);
+   /* Checks that qptr points to an element in q. If it doesn't an error is generated and
+    * abort() is called.
+    */
+
+
+  static void qdbg_stats(void)
+   { if (queues != 0 || allocates != 0)
+      { fprintf(stderr, "Number of queues not destroyed = %u\nNumber of queue elements not freed = %u\n", queues, allocates);
+      }
+   }
+
+  static void qdbg_note_alloc(queue_element *element)
+   { if (!exit_registered)
+      { exit_registered = TRUE;
+        atexit(qdbg_stats);
+      }
+     element->qallocated = &qalloc_magic;
+     allocates++;
+   }
+
+  static void qdbg_note_dealloc(queue_element *element)
+   { assert(allocates > 0);
+     allocates--;
+     /* Erase magic number in case it crops up in the 'right' place in a malloced block */
+     element->qallocated = NULL;
+   }
+
+  static void qdbg_note_queue_created(queue *q)
+   { if (!exit_registered)
+      { exit_registered = TRUE;
+        atexit(qdbg_stats);
+      }
+     queues++;
+     q->qactive = &qactive_magic;
+   }
+
+  static void qdbg_note_queue_destroyed(queue *q)
+   { assert(queues > 0);
+     queues--;
+     q->qactive = &qnotactive_magic;
+   }
+
+  static void qdbg_unqueue_element(queue_element *element)
+   { assert(element != NULL);
+     element->next = &magic;
+     element->prev = &magic;
+   }
+
+  static void qdbg_error(const char *function, const char *error)
+   { assert(function != NULL);
+     assert(error != NULL);
+
+     fputs(function, stderr);
+     fputs(": ",stderr);
+     fputs(error, stderr);
+     fputc('\n', stderr);
+     abort();
+   }
+
+  static void qdbg_check_element_unqueued(const queue_element *element, const char *function)
+   { assert(element != NULL);
+     if (element->qallocated != &qalloc_magic)
+      { qdbg_error(function, "Element was not allocated using queue_alloc_element");
+      }
+     if (element->next != &magic || element->prev != &magic)
+      { qdbg_error(function, "Element is still in a queue");
+      }
+   }
+
+  static void qdbg_check_queue_is_valid(const queue *q, const char *function)
+   { queue_element *qelement;
+
+     if (q == NULL)
+      { qdbg_error(function, "NULL has been passed as queue parameter");
+      }
+     if (q->qactive == &qnotactive_magic)
+      { qdbg_error(function, "The queue has been destroyed - you can no longer use it");
+      }
+     if (q->qactive != &qactive_magic)
+      { qdbg_error(function, "The queue parameter has not been created or is corrupt (or may have been destroyed)");
+      }
+
+     if (q->front != NULL)          /* The empty queue is OK */
+      { if (q->front == (queue_element *)q || q->end == (queue_element *)q)
+         { qdbg_error(function, "The queue references itself");
+         }
+        if (q->end->prev != NULL)
+         { qdbg_error(function, "The last element of the queue has an element behind it");
+         }
+        if (q->front->next != NULL)
+         { qdbg_error(function, "The first element in the queue has an element before it");
+         }
+
+        /* Check that, for each element in the queue, going forward
+         * and then backward leaves you at the same element
+         */
+        for (qelement = q->end; qelement->next != NULL; qelement = qelement->next)
+         { if (qelement->next->prev != qelement)
+            { qdbg_error(function, "Queue element wiring is incorrect");
+            }
+         }
+        if (qelement != q->front)
+         { qdbg_error(function, "Queue wiring has 'snapped' - either a missing link in the queue or the 'front' is corrupt");
+         }
+      }
+   }
+
+
+  static void qdbg_check_queue_ptr(queue_ptr qptr, const char *function)
+   { if (qptr == NULL)
+      { qdbg_error(function, "NULL has been passed as queue_ptr parameter");
+      }
+     if (qptr->qallocated != &qalloc_magic)
+      { qdbg_error(function, "queue_ptr does not point to an element - either it or the element is corrupt");
+      }
+     if (qptr->prev == &magic || qptr->next == &magic)
+      { qdbg_error(function, "queue_ptr points to an element that isn't in a queue");
+      }
+   }
+
+  static void qdbg_check_queue_ptr_in_queue(const queue *q, queue_ptr qptr, const char *function)
+   { queue_element *qelement;
+
+     qdbg_check_queue_ptr(qptr, function);
+     for (qelement = q->end; qelement != NULL; qelement = qelement->next)
+      { if (qptr == qelement)
+         { return;
+         }
+      }
+     qdbg_error(function, "queue_ptr does not point to an element in this queue");
+   }
+
+#endif
+
+
+
+void *queue_alloc_element(size_t size)
+ { queue_element *qelement;
+
+   qelement = malloc(size + sizeof(queue_element));
+   if (qelement == NULL)
+    { return NULL;
+    }
+   qdbg_unqueue_element(qelement);
+   qdbg_note_alloc(qelement);
+   return queue_TO_ELEMENT(qelement);
+ }
+
+void queue_free_element(void *element)
+ { if (element != NULL)
+    { queue_element *qelement = queue_TO_QUEUE_ELEMENT(element);
+      qdbg_check_element_unqueued(qelement, "queue_free_element");
+      qdbg_note_dealloc(qelement);
+      free(qelement);
+    }
+ }
+
+
+
+bool queue_create(queue **q)
+ { assert(q != NULL);
+   /* We should check that **q is not already a queue but we can't use
+    * (*q)->qactive because q could point anywhere (not
+    * necessarily to valid memory) so following it is dangerous.
+    * We could keep a list of all allocated queue but this is not
+    * really worth the trouble - misusing queue_create
+    * should cause problems either when it is destroyed twice (the
+    * second time it is not valid) or when the program ends
+    * (when a 'still allocated' queue will be reported)
+    */
+
+   *q = malloc(sizeof(struct queue_str));
+   if (*q != NULL)
+    { (*q)->front = NULL;
+      qdbg_note_queue_created(*q);
+      return TRUE;
+    }
+   return FALSE;
+ }
+
+
+void queue_destroy(queue *q)
+ { qdbg_check_queue_is_valid(q, "queue_destroy");
+
+   while (!queue_is_empty(q))
+    { queue_free_element(queue_remove_front(q));
+    }
+   qdbg_note_queue_destroyed(q);
+   free(q);
+ }
+
+
+bool queue_is_empty(const queue *q)
+ { qdbg_check_queue_is_valid(q, "queue_is_empty");
+
+   return q->front == NULL;
+ }
+
+
+void queue_add_front(queue *q, const void *element)
+ { queue_element *qelement;
+
+   assert(element != NULL);
+   qdbg_check_queue_is_valid(q, "queue_add_front");
+   qelement = queue_TO_QUEUE_ELEMENT(element);
+   qdbg_check_element_unqueued(qelement, "queue_add_front");
+
+   if (queue_is_empty(q))
+    { qelement->next = NULL;
+      qelement->prev = NULL;
+      q->front = qelement;
+      q->end   = qelement;
+    }
+   else
+    { q->front->next = qelement;
+      qelement->next = NULL;
+      qelement->prev = q->front;
+      q->front = qelement;
+    }
+   qdbg_check_queue_is_valid(q, "queue_add_front (post)");
+ }
+
+
+void queue_add_end(queue *q, const void *element)
+ { queue_element *qelement;
+
+   assert(element != NULL);
+   qdbg_check_queue_is_valid(q, "queue_add_end");
+   qelement = queue_TO_QUEUE_ELEMENT(element);
+   qdbg_check_element_unqueued(qelement, "queue_add_end");
+
+   if (queue_is_empty(q))
+    { qelement->next = NULL;
+      qelement->prev = NULL;
+      q->front = qelement;
+      q->end   = qelement;
+    }
+   else
+    { q->end->prev = qelement;
+      qelement->prev = NULL;
+      qelement->next = q->end;
+      q->end = qelement;
+    }
+   qdbg_check_queue_is_valid(q, "queue_add_end (post)");
+ }
+
+
+void *queue_remove_front(queue *q)
+ { queue_element *qelement;
+
+   qdbg_check_queue_is_valid(q, "queue_remove_front");
+   assert(!queue_is_empty(q));
+
+   qelement = q->front;
+   if (qelement->prev != NULL)
+    { qelement->prev->next = NULL;
+    }
+   q->front = qelement->prev;
+   /* If there's only one element in q then q->front will
+    * get set to NULL. q->end does not need to be set to NULL;
+    * see the test queue_is_empty()
+    */
+
+   qdbg_unqueue_element(qelement);
+   qdbg_check_queue_is_valid(q, "queue_remove_front (post)");
+   return queue_TO_ELEMENT(qelement);
+ }
+
+
+void *queue_remove_end(queue *q)
+ { queue_element *qelement;
+
+   qdbg_check_queue_is_valid(q, "queue_remove_end");
+   assert(!queue_is_empty(q));
+
+   qelement = q->end;
+   if (qelement->next != NULL)     /* i.e. qelement is not the only element */
+    { qelement->next->prev = NULL;
+      q->end = qelement->next;
+    }
+   else
+    { /* The only element has been removed - queue is now empty */
+      q->front = NULL;
+    }
+   qdbg_unqueue_element(qelement);
+   qdbg_check_queue_is_valid(q, "queue_remove_end (post)");
+   return queue_TO_ELEMENT(qelement);
+ }
+
+
+queue_ptr queue_ptr_front(const queue *q)
+ { qdbg_check_queue_is_valid(q, "queue_ptr_front");
+
+   return q->front;
+ }
+
+
+queue_ptr queue_ptr_end(const queue *q)
+ { qdbg_check_queue_is_valid(q, "queue_ptr_end");
+
+   if (queue_is_empty(q))
+    { return NULL;
+    }
+   return q->end;
+ }
+
+
+queue_ptr queue_ptr_before(queue_ptr qptr)
+ { qdbg_check_queue_ptr(qptr, "queue_ptr_before");
+
+   return qptr->next;
+ }
+
+
+queue_ptr queue_ptr_behind(queue_ptr qptr)
+ { qdbg_check_queue_ptr(qptr, "queue_ptr_behind");
+
+   return qptr->prev;
+ }
+
+
+void *queue_ptr_element(queue_ptr qptr)
+ { qdbg_check_queue_ptr(qptr, "queue_ptr_element");
+
+   return queue_TO_ELEMENT(qptr);
+ }
+
+
+void queue_add_before_ptr(queue *q, queue_ptr qptr, const void *element)
+ { queue_element *qelement;
+
+   qdbg_check_queue_is_valid(q, "queue_add_before_ptr");
+   qdbg_check_queue_ptr_in_queue(q, qptr, "queue_add_before_ptr");
+   assert(element != NULL);
+   qelement = queue_TO_QUEUE_ELEMENT(element);
+   qdbg_check_element_unqueued(qelement, "queue_add_before_ptr");
+
+   if (qptr == q->front)
+    { q->front = qelement;
+      qelement->next = NULL;
+      qelement->prev = qptr;
+      qptr->next     = qelement;
+    }
+   else
+    { qelement->next = qptr->next;
+      qelement->prev = qptr;
+      qptr->next     = qelement;
+      qelement->next->prev = qelement;
+    }
+   qdbg_check_queue_is_valid(q, "queue_add_before_ptr (post)");
+ }
+
+
+void queue_add_behind_ptr(queue *q, queue_ptr qptr, const void *element)
+ { queue_element *qelement;
+
+   qdbg_check_queue_is_valid(q, "queue_add_behind_ptr");
+   qdbg_check_queue_ptr_in_queue(q, qptr, "queue_add_behind_ptr");
+   assert(element != NULL);
+   qelement = queue_TO_QUEUE_ELEMENT(element);
+   qdbg_check_element_unqueued(qelement, "queue_add_behind_ptr");
+
+   if (qptr == q->end)
+    { q->end = qelement;
+      qelement->prev = NULL;
+      qelement->next = qptr;
+      qptr->prev     = qelement;
+    }
+   else
+    { qelement->prev = qptr->prev;
+      qelement->next = qptr;
+      qptr->prev     = qelement;
+      qelement->prev->next = qelement;
+    }
+   qdbg_check_queue_is_valid(q, "queue_add_behind_ptr (post)");
+ }
+
+void *queue_ptr_remove(queue *q, queue_ptr qptr)
+ { qdbg_check_queue_is_valid(q, "queue_ptr_remove");
+   qdbg_check_queue_ptr_in_queue(q, qptr, "queue_ptr_remove");
+
+   if (qptr == q->front)
+    { return queue_remove_front(q);
+    }
+   else
+    { if (qptr == q->end)
+       { return queue_remove_end(q);
+       }
+      else
+       { qptr->prev->next = qptr->next;
+         qptr->next->prev = qptr->prev;
+         qdbg_unqueue_element(qptr);
+         qdbg_check_queue_is_valid(q, "queue_ptr_remove (post)");
+         return queue_TO_ELEMENT(qptr);
+       }
+    }
+ }

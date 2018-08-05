@@ -1,0 +1,41 @@
+/*** debug_io.c ***/
+
+#include "debug_io.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "osargs.h"
+
+#include "bool.h"
+
+
+static bool flushing_is_enabled(void)
+ { static bool variable_read = FALSE;
+   static bool enabled;
+
+   if (!variable_read)
+    { enabled = (getenv("ToolLib$Flush") != NULL);
+      variable_read = TRUE;
+    }
+   return enabled;
+ }
+
+
+
+
+void debug_io_flush()
+ { /* Relies on Acorn's implementation of FILE */
+
+   if (flushing_is_enabled() && stderr->__file != 0)
+    { os_f f = stderr->__file;
+
+      /* The set_allocation() call avoids a bug in RISC OS where osargs_ensure() won't
+       * write data to the file if the file needs to be extended.
+       */
+fputs("-----flushing\n", stderr);
+      fflush(stderr);  /* stderr shouldn't be buffered - but lets make sure the data is really flushed */
+      osargs_set_allocation(f, osargs_read_ext(f) + 8192);
+      osargs_ensure(f);
+    }
+ }

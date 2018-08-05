@@ -1,0 +1,47 @@
+| !Run file for !DVIview
+| Copyright 1992-1995 Paul Field
+
+Set File$Type_CE4 DVI
+Set Alias$@RunType_CE4 Run <Obey$Dir>.!Run %%*0
+IconSprites <Obey$Dir>.!Sprites
+
+Set DVIview$Dir <Obey$Dir>
+
+RMEnsure UtilityModule 3.10 Error !DVIview can only be run on RISC OS 3.10 or later
+
+RMEnsure FilterManager 0.09 RMLoad System:modules.FilterMgr
+RMEnsure FilterManager 0.09 Error You need filter manager 0.09 or later to run !DVIview
+
+RMEnsure BorderUtils 0.02 RMEnsure WindowManager 3.17  RMLoad System:modules.BorderUtil
+
+RMEnsure Toolbox    0.00  RMLOAD System:modules.toolbox.toolbox
+RMEnsure Toolbox    1.23  ERROR You need toolbox 1.23 or later to run !DVIview
+RMEnsure Window     0.00  RMLOAD System:modules.toolbox.window
+RMEnsure Window     1.15  ERROR You need window 1.15 or later to run !DVIview
+RMEnsure Menu       0.00  RMLOAD System:modules.toolbox.menu
+RMEnsure Menu       0.15  ERROR You need menu 0.15 or later to run !DVIview
+RMEnsure Iconbar    0.00  RMLOAD System:modules.toolbox.iconbar
+RMEnsure Iconbar    1.08  ERROR You need iconbar 1.08 or later to run !DVIview
+RMEnsure ProgInfo   0.00  RMLOAD System:modules.toolbox.proginfo
+RMEnsure ProgInfo   0.05  ERROR You need proginfo 0.05 or later to run !DVIview
+RMEnsure FileInfo   0.00  RMLOAD System:modules.toolbox.fileinfo
+RMEnsure FileInfo   0.05  ERROR You need fileinfo 0.05 or later to run !DVIview
+RMEnsure SaveAs     0.00  RMLOAD System:modules.toolbox.saveas
+RMEnsure SaveAs     0.03  ERROR You need saveas 0.03 or later to run !DVIview
+RMEnsure Scale      0.00  RMLOAD System:modules.toolbox.scale
+RMEnsure Scale      0.03  ERROR You need scale 0.03 or later to run !DVIview
+RMEnsure DrawFile   0.00  RMLOAD System:modules.DrawFile
+RMEnsure DrawFile   1.43  ERROR You need drawfile 1.43 or later to run !DVIview
+
+
+If "<TeXFonts$Version>" = "" Then Error 0 !TeXFonts has not been seen by the filer (or is a very old version - contact the author for an upgrade)
+If <TeXFonts$Version> < 2  Then Error 0 Incompatible version of !TeXFonts. Please contact the author for an upgrade
+
+|Check to see whether we can use JPEGs
+set DVIview$AllowJPEGs 1
+RMEnsure SpriteExtend 0.99 unset DVIview$AllowJPEGs
+
+
+WimpSlot -min 1400k -max 1400k
+If "<DVIview$Running>" <> "" then Error !DVIview is already running
+Run <DVIview$Dir>.!RunImage %*0 2><DVIview$Dir>.^.DVIviewLog

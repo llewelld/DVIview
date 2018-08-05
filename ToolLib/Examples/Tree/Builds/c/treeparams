@@ -1,0 +1,124 @@
+/*** treeparams.h ***/
+/* A (shared) window containing the tree parameters
+ * (c) Paul Field 1995
+ * v1.00 - 22/11/1995
+ */
+
+#include "treeparams.h"
+
+#include <assert.h>
+
+#include "hourglass.h"
+#include "numberrange.h"
+#include "toolbox.h"
+
+#include "error.h"
+#include "exception.h"
+#include "nev_toolbox.h"
+
+#include "line_storer.h"
+#include "tree.h"
+#include "treewindow.h"
+
+
+/* Macros for converting between MM and OS units */
+/* The conversion factor for mm to os is 907/128 is about 180/25.4 and for os to mm is 18/128 is about 25.4/180
+ * because there are 180 OS units in an Inch and 25.4 mm in an Inch.
+ * A division factor of 128 is used because division by a power of 2 is optimised to a bit shift by
+ * Norcroft C.
+ */
+
+#define MMtoOS(mm) (((mm)*908+64)/128)
+#define OStoMM(os) (((os)*18+64)/128)
+
+
+/* Actions that concern this window */
+enum { action_DRAW_TREE = 0x100 };
+
+
+/* Gadgets in the parameters window */
+enum
+ { segments_id,
+   length_id,
+   length_scale_id,
+   left_offset_id,
+   right_offset_id,
+   angle_id,
+   angle_scale_id,
+   depth_id,
+   length_scale_scale_id
+ };
+
+
+/* Object id of the parameter window */
+static toolbox_o tree_params_id;
+
+
+
+static void tree_params_fill(const tree_def *tree)
+ { numberrange_set_value(0, tree_params_id, length_id, OStoMM(tree->initial_state.segment_length));
+   numberrange_set_value(0, tree_params_id, angle_id,  tree->initial_state.branch_angle);
+   numberrange_set_value(0, tree_params_id, depth_id,  tree->initial_state.remaining_depth);
+
+   numberrange_set_value(0, tree_params_id, segments_id,           tree->parameters.segments);
+   numberrange_set_value(0, tree_params_id, left_offset_id,        (int)(tree->parameters.left_proportion    * 100.0));
+   numberrange_set_value(0, tree_params_id, right_offset_id,       (int)(tree->parameters.right_proportion   * 100.0));
+   numberrange_set_value(0, tree_params_id, length_scale_id,       (int)(tree->parameters.length_scale       * 100.0));
+   numberrange_set_value(0, tree_params_id, length_scale_scale_id, (int)(tree->parameters.length_scale_scale * 100.0));
+   numberrange_set_value(0, tree_params_id, angle_scale_id,        (int)(tree->parameters.angle_scale        * 100.0));
+ }
+
+
+
+static nevent_result tree_params_draw(bits action_code, toolbox_action *action, toolbox_block *id_block, void *handle)
+ { tree_def  tree;
+
+   assert(action_code == action_DRAW_TREE);
+   assert(id_block->this_obj == tree_params_id);
+   NOT_USED(action_code);
+   NOT_USED(action);
+   NOT_USED(id_block);
+   NOT_USED(handle);
+
+   tree.initial_state.segment_length  = MMtoOS(numberrange_get_value(0, tree_params_id, length_id));
+   tree.initial_state.tree_angle      = 0;
+   tree.initial_state.branch_angle    = numberrange_get_value(0, tree_params_id, angle_id);
+   tree.initial_state.remaining_depth = numberrange_get_value(0, tree_params_id, depth_id);
+
+   tree.parameters.segments           = numberrange_get_value(0, tree_params_id, segments_id);
+   tree.parameters.left_proportion    = numberrange_get_value(0, tree_params_id, left_offset_id) / 100.0;
+   tree.parameters.right_proportion   = numberrange_get_value(0, tree_params_id, right_offset_id) / 100.0;
+   tree.parameters.length_scale       = numberrange_get_value(0, tree_params_id, length_scale_id) / 100.0;
+   tree.parameters.length_scale_scale = numberrange_get_value(0, tree_params_id, length_scale_scale_id) / 100.0;
+   tree.parameters.angle_scale        = numberrange_get_value(0, tree_params_id, angle_scale_id) / 100.0;
+
+   /* Update the window parameters to reflect the value actually read.
+    * For example, the user could type in an out-of-range value which will be returned
+    * as the maximum (or minimum) value but not updated on screen without this call
+    */
+   tree_params_fill(&tree);
+
+   try
+    { hourglass_on();
+      tree_calculate(640, 200, &tree, &line_storer);
+      hourglass_off();
+    }
+   catch
+    { /* If there's an error we'll report it and then carry on -
+       * the user will see an incomplete tree
+       */
+      error_report_exception(exception_current());
+    }
+   catch_end
+
+   tree_window_update();
+
+   return nevent_HANDLED;
+ }
+
+
+
+void tree_params_initialise(void)
+ { tree_params_id = toolbox_create_object(0, (toolbox_id)"Parameters");
+   nevent_toolbox_register_handler(tree_params_id, action_DRAW_TREE, tree_params_draw, NULL);
+ }

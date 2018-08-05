@@ -1,0 +1,806 @@
+/**** document.c ****/
+/* Handles a document (i.e. dvifile + page viewers (windows))
+ * (c) Paul Field
+ */
+
+#include "document.h"
+
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+#include "oslib/fileinfo.h"
+#include "hourglass.h"
+#include "menu.h"
+#include "numberrange.h"
+#include "saveas.h"
+#include "osfile.h"
+
+#include "allocate.h"
+#include "box.h"
+//#include "debug_io.h"
+#include "exception.h"
+#include "list.h"
+#include "message.h"
+#include "nev_toolbox.h"
+#include "save_buffer.h"
+
+#include "choices.h"
+#include "papersize.h"
+#include "print_doc.h"
+
+
+enum { NeverReached = FALSE };
+
+struct document_str
+ { list*       viewer_list;
+   dvifile*    dvi;
+   paper_size* paper;
+   bool        landscape;
+
+#ifndef NDEBUG
+   int*       document_debug_id;      /* Always == &document_debug_id */
+#endif
+ };
+
+
+enum
+ { Ev_DocFillOffsets     = 0x200,
+   Ev_DocSetOffsets      = 0x201,
+   Ev_DocToggleLandscape = 0x202,
+   Ev_DocMenuFill        = 0x203,
+
+   Ev_DebugDVIFile       = 0xf00
+ };
+
+enum offsets_component_id
+ { offsets_left_id,
+   offsets_top_id
+ };
+
+enum save_component_id
+ { save_from_id,
+   save_to_id
+ };
+
+
+enum doc_menu_component_id
+ { doc_menu_landscape_id = 0xd
+ };
+
+
+
+static list* all_documents;  /* List of all document objects */
+
+
+#ifndef NDEBUG
+static bool document_initialised = FALSE;
+static int document_debug_id;
+
+#define document_debug_validate(d) ((d) != NULL && ((d)->document_debug_id == &document_debug_id))
+#endif
+
+
+
+
+static document* document_get_from_id_block(const toolbox_block* id_block)
+ { viewer*   view;
+   document* doc;
+
+   view = toolbox_get_client_handle(0, id_block->ancestor_obj);
+   doc = viewer_document(view);
+   assert(document_debug_validate(doc));
+   return doc;
+ }
+
+
+
+
+static nevent_result document_fill_fileinfo(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { const document*  doc;
+   os_date_and_time time;
+
+   assert(event_code == action_FILE_INFO_ABOUT_TO_BE_SHOWN);
+   NOT_USED(handle);
+   NOT_USED(event);
+   NOT_USED(event_code);
+
+   doc = document_get_from_id_block(id_block);
+   fileinfo_set_file_name(0, id_block->this_obj, dvifile_filename(doc->dvi));
+   dvifile_time_stamp(doc->dvi, time);
+   fileinfo_set_date(0, id_block->this_obj, (os_date_and_time const *)&time);
+   fileinfo_set_file_size(0, id_block->this_obj, dvifile_size(doc->dvi));
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static void document_fill_offsets(toolbox_o dbox_id, const document* doc)
+ { int left;
+   int top;
+
+   dvifile_offsets(doc->dvi, &left, &top);
+
+   /* The user sees left and top relative to the defaults */
+   left -= dvifile_DEFAULT_LEFT_OFFSET;
+   top  -= dvifile_DEFAULT_TOP_OFFSET;
+
+   numberrange_set_value(0, dbox_id, offsets_left_id, DrawToMM10(left));
+   numberrange_set_value(0, dbox_id, offsets_top_id,  DrawToMM10(top));
+ }
+
+
+
+
+static nevent_result document_fill_offsets_ev(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { const document* doc;
+
+   assert(event_code == Ev_DocFillOffsets);
+   NOT_USED(handle);
+   NOT_USED(event);
+   NOT_USED(event_code);
+
+   doc = document_get_from_id_block(id_block);
+   document_fill_offsets(id_block->this_obj, doc);
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result document_set_offsets(bits event_code, toolbox_action *event, toolbox_block *id_block, void *handle)
+ { document* doc;
+   int       old_left;
+   int       old_top;
+   int       left;
+   int       top;
+
+   assert(event_code == Ev_DocSetOffsets);
+   NOT_USED(handle);
+   NOT_USED(event);
+   NOT_USED(event_code);
+
+   doc = document_get_from_id_block(id_block);
+
+   dvifile_offsets(doc->dvi, &old_left, &old_top);
+
+   left = MM10ToDraw(numberrange_get_value(0, id_block->this_obj, offsets_left_id));
+   top  = MM10ToDraw(numberrange_get_value(0, id_block->this_obj, offsets_top_id));
+
+   /* The user sees left and top relative to the defaults */
+   left += dvifile_DEFAULT_LEFT_OFFSET;
+   top  += dvifile_DEFAULT_TOP_OFFSET;
+
+   dvifile_set_offsets(doc->dvi, left, top);
+
+   if (old_left != left || old_top != top)
+    { list_ptr ptr;
+
+      for (ptr = list_ptr_head(doc->viewer_list); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+       { viewer_shift_display(list_ptr_element(ptr), old_left, old_top, left, top);
+       }
+    }
+
+   document_fill_offsets(id_block->this_obj, doc);
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result document_menu_fill(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { const document* doc;
+
+   assert(event_code == Ev_DocMenuFill);
+   NOT_USED(event);
+   NOT_USED(handle);
+   NOT_USED(event_code);
+
+   doc = document_get_from_id_block(id_block);
+   menu_set_tick(0, id_block->this_obj, doc_menu_landscape_id, doc->landscape);
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result document_toggle_landscape(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { document* doc;
+   list_ptr  ptr;
+
+   assert(event_code == Ev_DocToggleLandscape);
+   NOT_USED(event);
+   NOT_USED(handle);
+   NOT_USED(event_code);
+
+   doc = document_get_from_id_block(id_block);
+
+   doc->landscape = !doc->landscape;
+
+   menu_set_tick(0, id_block->this_obj, doc_menu_landscape_id, doc->landscape);
+
+   for (ptr = list_ptr_head(doc->viewer_list); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+    { viewer_update_extent(list_ptr_element(ptr));
+    }
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result document_tick_paper(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { assert(event_code == Ev_PaperMenuFill);
+   NOT_USED(event);
+   NOT_USED(handle);
+   NOT_USED(event_code);
+
+   if (id_block->ancestor_obj != toolbox_NULL_OBJECT)
+    { const document* doc;
+
+      doc = document_get_from_id_block(id_block);
+      menu_set_tick(0, id_block->this_obj, (toolbox_c)doc->paper, TRUE);
+    }
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result document_set_paper(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { assert(event_code == Ev_PaperMenuSelect);
+   NOT_USED(event);
+   NOT_USED(handle);
+   NOT_USED(event_code);
+
+   if (id_block->ancestor_obj != toolbox_NULL_OBJECT)
+    { document*   doc;
+      paper_size* new_paper;
+
+      doc = document_get_from_id_block(id_block);
+      new_paper = (paper_size*)id_block->this_cmp;
+
+      if (new_paper != doc->paper)
+       { list_ptr ptr;
+
+         menu_set_tick(0, id_block->this_obj, (toolbox_c)new_paper, TRUE);
+         menu_set_tick(0, id_block->this_obj, (toolbox_c)doc->paper, FALSE);
+         papersize_finished(doc->paper);
+         doc->paper = papersize_using(new_paper);
+
+         for (ptr = list_ptr_head(doc->viewer_list); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+          { viewer_update_extent(list_ptr_element(ptr));
+          }
+       }
+      return nevent_HANDLED;
+    }
+   return nevent_NOT_HANDLED;
+ }
+
+
+
+
+static nevent_result document_paper_changed(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { document* doc = handle;
+   papersize_action_size_changed* change_event = (papersize_action_size_changed*)event->data.reserved;
+
+   assert(event_code == Ev_PaperSizeChanged);
+   NOT_USED(event);
+   NOT_USED(event_code);
+   NOT_USED(id_block);
+
+   assert(document_debug_validate(doc));
+
+   if (doc->paper == change_event->paper)
+    { list_ptr ptr;
+
+      for (ptr = list_ptr_head(doc->viewer_list); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+       { viewer_update_extent(list_ptr_element(ptr));
+       }
+    }
+
+   /* Don't claim - others need to see this event */
+   return nevent_NOT_HANDLED;
+ }
+
+
+
+
+static nevent_result document_save_fill(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { const document* doc;
+   toolbox_o       saveas_window_id;
+   unsigned        pages;
+
+   assert(event_code == action_SAVE_AS_ABOUT_TO_BE_SHOWN);
+   NOT_USED(event);
+   NOT_USED(handle);
+   NOT_USED(event_code);
+
+   doc   = document_get_from_id_block(id_block);
+   pages = dvifile_pages(doc->dvi);
+
+   saveas_window_id = saveas_get_window_id(0, id_block->this_obj);
+   numberrange_set_bounds(numberrange_BOUND_UPPER, saveas_window_id, save_from_id, 0, pages, 0, 0);
+   numberrange_set_value(0, saveas_window_id, save_from_id, 1);
+
+   numberrange_set_bounds(numberrange_BOUND_UPPER, saveas_window_id, save_to_id, 0, pages, 0, 0);
+   numberrange_set_value(0, saveas_window_id, save_to_id, pages);
+
+   saveas_set_file_name(0, id_block->this_obj, message_lookup("Pages"));
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result document_save_new_page(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { int from;
+   int to;
+
+   assert(event_code == action_NUMBER_RANGE_VALUE_CHANGED);
+   NOT_USED(event);
+   NOT_USED(handle);
+   NOT_USED(event_code);
+
+   from = numberrange_get_value(0, id_block->this_obj, save_from_id);
+   to   = numberrange_get_value(0, id_block->this_obj, save_to_id);
+
+   /* If the range is backwards (i.e. from > to) then adjust it */
+   if (from > to)
+    { /* If 'from' was made larger then bump up 'to' */
+      if (id_block->this_cmp == save_from_id)
+       { numberrange_set_value(0, id_block->this_obj, save_to_id, from);
+       }
+      else
+       { assert(id_block->this_cmp == save_to_id);
+         /* If 'to' was made smaller then bump down 'from' */
+         numberrange_set_value(0, id_block->this_obj, save_from_id, to);
+       }
+    }
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result document_save(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { const document* doc;
+   int             from;
+   int             to;
+   toolbox_o       save_window_id;
+   const char*     directory_name = ((saveas_action_save_to_file*)event->data.reserved)->file_name;
+
+   assert(event_code == action_SAVE_AS_SAVE_TO_FILE);
+   NOT_USED(handle);
+   NOT_USED(event);
+   NOT_USED(event_code);
+
+   doc = document_get_from_id_block(id_block);
+
+   save_window_id = saveas_get_window_id(0, id_block->this_obj);
+
+   from = numberrange_get_value(0, save_window_id, save_from_id);
+   to   = numberrange_get_value(0, save_window_id, save_to_id);
+
+   try
+    { unsigned i;
+      char     filename[sizeof(saveas_action_save_to_file)+10];
+      char*    leaf_name;
+
+      osfile_create_dir(directory_name, to-from+1);
+
+      strcpy(filename, directory_name);
+      strcat(filename, ".");
+      leaf_name = filename + strlen(filename);
+
+      hourglass_on();
+      for (i = from; i <= to; i++)
+       { hourglass_percentage(100*(i-from)/(to-from+1));
+         sprintf(leaf_name, "%.6s%.3u", message_lookup("Page"), i);
+         document_save_page(doc, i-1, filename);
+       }
+      hourglass_off();
+      saveas_file_save_completed(TRUE, id_block->this_obj, directory_name);
+    }
+   catch
+    { saveas_file_save_completed(FALSE, id_block->this_obj, directory_name);
+      throw();
+    }
+   catch_end
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+
+#ifndef NDEBUG
+static nevent_result document_debug_dvifile(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { const document* doc;
+
+   assert(event_code == Ev_DebugDVIFile);
+   NOT_USED(event);
+   NOT_USED(handle);
+   NOT_USED(event_code);
+
+   doc = document_get_from_id_block(id_block);
+   dvifile_debug_output(doc->dvi);
+
+   return nevent_HANDLED;
+ }
+#endif
+
+
+
+/**** Functions needed by print system ****/
+
+static const char *document_name(void* view_handle)
+ { const document* doc;
+
+   assert(view_handle);
+   doc = viewer_document(view_handle);
+   return dvifile_filename(doc->dvi);
+ }
+
+
+
+
+static unsigned document_pages(void* view_handle)
+ { const document* doc;
+
+   assert(view_handle);
+   doc = viewer_document(view_handle);
+   return dvifile_pages(doc->dvi);
+ }
+
+
+
+
+static void document_page_size(void* view_handle, unsigned* page_width, unsigned* page_height)
+ { const document* doc;
+
+   assert(view_handle);
+   assert(page_width);
+   assert(page_height);
+
+   doc = viewer_document(view_handle);
+   papersize_size(doc->paper, doc->landscape, page_width, page_height);
+ }
+
+
+
+
+static void document_declare_page_fonts(void* view_handle, unsigned page_number, print_font_declarer* declarer)
+ { const document* doc;
+   font_set*       fonts;
+   set_ptr         ptr;
+
+   doc = viewer_document(view_handle);
+
+   fonts = font_set_construct();
+   dvifile_page_fonts(doc->dvi, page_number, fonts);
+
+   for (ptr = set_ptr_first(fonts); !set_ptr_past_the_end(ptr); set_ptr_inc(&ptr))
+    { font_info* info;
+
+      info = set_ptr_element(ptr);
+      declarer->declare_font(info->name, 0);
+    }
+   set_destroy(fonts);
+ }
+
+
+
+
+static void document_declare_page(void* view_handle, void* page_handle, print_rect_declarer* declarer)
+ { const document* doc;
+   os_box          paper_box;
+   os_box          page_box;
+   unsigned        width;
+   unsigned        height;
+
+   doc = viewer_document(view_handle);
+
+   document_paper_size(doc, &width, &height);
+
+   page_bounds(page_handle, 0, height*DrawinOS, &page_box);
+   page_box.x0 /= DrawinOS;
+   page_box.y0 /= DrawinOS;
+   page_box.x1 /= DrawinOS;
+   page_box.y1 /= DrawinOS;
+
+   paper_box.x0 = 0;
+   paper_box.y0 = 0;
+   paper_box.x1 = width;
+   paper_box.y1 = height;
+
+   if (box_clip(&paper_box, &page_box))
+    { declarer->declare_rectangle(&page_box, os_COLOUR_WHITE, 0);
+    }
+ }
+
+
+
+
+static void document_draw_page(void* view_handle, void* page_handle, unsigned id, const os_box* clip)
+ { const document* doc;
+   unsigned        width;
+   unsigned        height;
+
+   NOT_USED(id);
+
+   doc = viewer_document(view_handle);
+   document_paper_size(doc, &width, &height);
+   height *= DrawinOS;
+
+#ifdef PRINT_VERBOSE
+         fprintf(stderr, "document: about to draw page %p with height %u\n", page_handle, height);
+         debug_io_flush();
+#endif
+
+   page_draw(page_handle, 0, height, 100, clip);
+ }
+
+
+
+
+static void* document_get_page_handle(void* view_handle, unsigned page_no)
+ { document* doc;
+
+   doc = viewer_document(view_handle);
+   return dvifile_page(doc->dvi, page_no);
+ }
+
+
+
+
+static void document_discard_page_handle(void* view_handle, void* page_handle)
+ { NOT_USED(view_handle);
+
+   page_dec_reference(page_handle);
+ }
+
+
+
+
+static void document_remove_from_list(const document* doc)
+ { list_ptr ptr;
+
+   assert(!list_is_empty(all_documents));
+
+   for (ptr = list_ptr_head(all_documents); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+    { if (list_ptr_element(ptr) == doc)
+       { list_ptr_remove_element(ptr);
+         break;
+       }
+    }
+ }
+
+
+
+
+static void document_destruct(document* doc)
+ { assert(doc);
+
+   nevent_toolbox_deregister_handler(nevent_ALL_OBJECTS, Ev_PaperSizeChanged, document_paper_changed, doc);
+   dvifile_destruct(doc->dvi);
+   assert(list_is_empty(doc->viewer_list));
+   papersize_finished(doc->paper);
+   list_destroy(doc->viewer_list);
+#ifndef NDEBUG
+   doc->document_debug_id = NULL;
+#endif
+   document_remove_from_list(doc);
+   list_free_element(doc);
+ }
+
+
+
+
+static void document_destruct_all(void)
+ { while(!list_is_empty(all_documents))
+    { /* We must destroy documents by destroying all the viewers (which will indirectly cause the
+       * document to be destroyed), otherwise pages may have non-0 reference counts when
+       * they are destroyed
+       */
+      document* doc;
+      unsigned  num_viewers;
+
+      doc = list_ptr_element(list_ptr_head(all_documents));
+      num_viewers = list_length(doc->viewer_list);
+      while(num_viewers-- > 0)
+       { viewer_destruct(list_ptr_element(list_ptr_head(doc->viewer_list)));
+       }
+    }
+ }
+
+
+
+
+void document_init(void)
+ { toolbox_o save_id;
+   toolbox_o save_window_id;
+
+   /* Register general document events */
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, action_FILE_INFO_ABOUT_TO_BE_SHOWN, document_fill_fileinfo, NULL);
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, Ev_DocFillOffsets,     document_fill_offsets_ev,  NULL);
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, Ev_DocSetOffsets,      document_set_offsets,      NULL);
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, Ev_DocToggleLandscape, document_toggle_landscape, NULL);
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, Ev_DocMenuFill,        document_menu_fill,        NULL);
+
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, Ev_PaperMenuFill,   document_tick_paper, NULL);
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, Ev_PaperMenuSelect, document_set_paper,  NULL);
+
+   save_window_id = toolbox_create_object(0, (toolbox_id)"SavePagesW");
+   nevent_toolbox_register_handler(save_window_id, action_NUMBER_RANGE_VALUE_CHANGED, document_save_new_page, NULL);
+
+   save_id = toolbox_create_object(0, (toolbox_id)"SavePages");
+   nevent_toolbox_register_handler(save_id, action_SAVE_AS_ABOUT_TO_BE_SHOWN, document_save_fill, NULL);
+   nevent_toolbox_register_handler(save_id, action_SAVE_AS_SAVE_TO_FILE,      document_save,      NULL);
+
+   all_documents = list_create();
+   atexit(document_destruct_all);
+
+#ifndef NDEBUG
+   document_initialised = TRUE;
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, Ev_DebugDVIFile, document_debug_dvifile, NULL);
+#endif
+ }
+
+
+
+
+void document_construct(const char* filename)
+ { document* doc;
+
+   assert(document_initialised);
+
+   doc = list_alloc_element(sizeof(struct document_str));
+   doc->viewer_list = NULL;
+   doc->dvi         = NULL;
+
+   try
+    { nevent_toolbox_register_handler(nevent_ALL_OBJECTS, Ev_PaperSizeChanged, document_paper_changed, doc);
+      try
+       { unsigned width;
+         unsigned height;
+         int      top;
+         int      left;
+
+         doc->viewer_list = list_create();
+         doc->dvi         = dvifile_construct(filename);
+
+         choices_offsets(&left, &top);
+         dvifile_set_offsets(doc->dvi, left + dvifile_DEFAULT_LEFT_OFFSET, top + dvifile_DEFAULT_TOP_OFFSET);
+
+         dvifile_page_bounds(doc->dvi, &height, &width);
+         doc->paper = papersize_closest(width,height,&doc->landscape);
+#ifndef NDEBUG
+         doc->document_debug_id = &document_debug_id;
+#endif
+
+         viewer_construct(doc);
+         list_cons(all_documents, doc);
+       }
+      catch
+       { dvifile_destruct(doc->dvi);
+         list_destroy(doc->viewer_list);
+         nevent_toolbox_deregister_handler(nevent_ALL_OBJECTS, Ev_PaperSizeChanged, document_paper_changed, doc);
+         throw();
+       }
+      catch_end
+    }
+   catch
+    { list_free_element(doc);
+      throw();
+    }
+   catch_end
+ }
+
+
+
+
+dvifile* document_dvifile(document* doc)
+ { assert(document_debug_validate(doc));
+
+   return doc->dvi;
+ }
+
+
+
+
+void document_paper_size(const document* doc, unsigned* width, unsigned* height)
+ { papersize_size(doc->paper, doc->landscape, width, height);
+   *width  /= MillipointsinOS;
+   *height /= MillipointsinOS;
+ }
+
+
+
+
+void document_add_viewer(document* doc, viewer* view)
+ { assert(document_debug_validate(doc));
+
+   list_cons(doc->viewer_list, view);
+ }
+
+
+
+
+void document_remove_viewer(document* doc, viewer* view)
+ { list_ptr ptr;
+
+   assert(document_debug_validate(doc));
+
+   for (ptr = list_ptr_head(doc->viewer_list); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+    { if (list_ptr_element(ptr) == view)
+       { list_ptr_remove_element(ptr);
+         break;
+       }
+    }
+
+   if (list_is_empty(doc->viewer_list))
+    { document_destruct(doc);
+    }
+ }
+
+
+
+
+void document_save_page(const document* doc, unsigned page_num, const char* filename)
+ { page* p;
+
+   save_buffer_create_for_file(filename, osfile_TYPE_DRAW);
+   try
+    { p = dvifile_page(doc->dvi, page_num);
+
+      try
+       { unsigned width;
+         unsigned height;
+
+         document_paper_size(doc, &width, &height);
+         height *= DrawinOS;
+         page_save(p, 0, height);
+       }
+      catch
+       { page_dec_reference(p);
+         throw();
+       }
+      catch_end
+
+      page_dec_reference(p);
+    }
+   catch
+    { save_buffer_destroy(FALSE);
+      throw();
+    }
+   catch_end
+
+   save_buffer_destroy(TRUE);
+ }
+
+
+
+
+print_doc abstract_document =
+ { NULL,
+
+   document_name,
+   document_pages,
+   document_page_size,
+   NULL, /* The document font table doesn't include fonts in diagrams so we can't take advantage of it */
+   document_declare_page_fonts,
+   document_declare_page,
+   document_draw_page,
+   document_get_page_handle,
+   document_discard_page_handle
+ };

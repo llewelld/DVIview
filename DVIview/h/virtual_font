@@ -1,0 +1,73 @@
+/** virtual_font.h **/
+/* Data structure for virtual fonts
+ * (c) Paul Field 1995
+ */
+
+#ifndef _virtual_font_h
+#define _virtual_font_h
+
+#include "font_set.h"
+
+
+typedef struct virtual_font_str virtual_font;
+
+
+virtual_font* virtual_font_construct(const char* name, int size, double dvi_to_1e7_metres);
+ /* Pre: name != NULL
+  *      The file "TeXFonts:name.vf" exists
+  *      size is the size of the font in dvi units
+  *      dvi_to_1e7_metres converts (by multiplication) dvi units into 1e-7metres
+  * Exceptions: exception_NO_MEMORY
+  *
+  * Creates a virtual font from the vf file 'name.vf'
+  */
+
+
+void virtual_font_destruct(virtual_font* vfont);
+ /* Frees all the memory associated with vfont
+  * (vfont may be NULL)
+  */
+
+
+bool virtual_font_char_is_valid(const virtual_font* vfont, unsigned char c);
+ /* Pre: vfont != NULL
+  *
+  * Returns TRUE iff c is a valid character in the font
+  */
+
+
+int virtual_font_char_width(const virtual_font* vfont, unsigned char c);
+ /* Pre: vfont != NULL
+  *      virtual_font_char_is_valid(vfont, c)
+  *
+  * Returns the width of character 'c' in DVI Units
+  */
+
+
+void virtual_font_render(const virtual_font* vfont, unsigned char c, int x, int y);
+ /* Pre: vfont != NULL
+  *      virtual_font_char_is_valid(vfont, c)
+  *
+  * Renders character c at position (x,y)
+  * (x,y) is in DVI units
+  */
+
+
+void virtual_font_add_render_fonts_to_set(const virtual_font* vfont, font_set* fonts);
+ /* Pre: vfont != NULL
+  *      fonts != NULL
+  * Exceptions: exception_NO_MEMORY
+  *
+  * Adds to fonts the system fonts needed to render characters from vfont.
+  * On exception the set may contain some fonts
+  */
+
+
+#ifndef NDEBUG
+void virtual_font_debug_output(const virtual_font* vfont);
+#else
+#define virtual_font_debug_output(tfont)
+#endif
+
+
+#endif

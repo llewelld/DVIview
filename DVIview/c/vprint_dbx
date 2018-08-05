@@ -1,0 +1,269 @@
+/**** vprint_dbx.c ****/
+/* Printing dialogue box for vprint
+ * (c) Paul Field
+ */
+
+#include "vprint_dbx.h"
+
+#include <assert.h>
+
+#include "macros.h"
+#include "numberrange.h"
+#include "optionbutton.h"
+#include "pdriver.h"
+#include "radiobutton.h"
+#include "window.h"
+
+#include "exception.h"
+#include "message.h"
+#include "nev_toolbox.h"
+#include "tbx.h"
+
+#include "vprint.h"
+
+
+
+/* Gadget component ids in the print dialogue box */
+
+typedef enum dbx_ids_enum
+ { dbx_first  = 0x0,
+   dbx_last   = 0x1,
+   dbx_copies = 0x2,
+
+   dbx_all    = 0x10,
+   dbx_range  = 0x11,
+
+   dbx_type_base   = 0x20,
+   dbx_type_fourup = 0x25,
+
+   dbx_face_up_printer = 0x30,
+   dbx_double_sided    = 0x31,
+   dbx_collate         = 0x32,
+   dbx_pause           = 0x33,
+   dbx_straight_path   = 0x34,
+
+   dbx_print = 0x202
+ }dbx_ids;
+
+
+
+
+/* actions from the print dialogue */
+
+enum
+ { action_Print        = 0x500,
+   action_Save         = 0x501
+ };
+
+
+
+/* Global data structures */
+
+static toolbox_o                  print_dbox_id = toolbox_NULL_OBJECT;
+static const vprint_choice_store* choice_store  = NULL;
+static print_doc*                 document      = NULL;
+
+
+
+static void* document_handle(const toolbox_block* id_block)
+ /* Get the document handle from the ancestor/parent objects of the print dialogue box */
+ { toolbox_o document_id;
+
+   document_id = (id_block->ancestor_obj != toolbox_NULL_OBJECT ? id_block->ancestor_obj : id_block->parent_obj);
+   return toolbox_get_client_handle(0, document_id);
+ }
+
+
+
+
+static void store_choices(void)
+ { vprint_choices new_choices;
+
+   assert(print_dbox_id != toolbox_NULL_OBJECT);
+
+   new_choices.print_whole_document = (tbx_radioarray_get_value(print_dbox_id, dbx_all) == 0);
+
+   new_choices.first_page    = numberrange_get_value   (0, print_dbox_id, dbx_first)-1;
+   new_choices.last_page     = numberrange_get_value   (0, print_dbox_id, dbx_last)-1;
+   new_choices.copies        = numberrange_get_value   (0, print_dbox_id, dbx_copies);
+   new_choices.face_up       = optionbutton_get_state  (0, print_dbox_id, dbx_face_up_printer);
+   new_choices.straight_path = optionbutton_get_state  (0, print_dbox_id, dbx_straight_path);
+   new_choices.collate       = optionbutton_get_state  (0, print_dbox_id, dbx_collate);
+   new_choices.pause         = optionbutton_get_state  (0, print_dbox_id, dbx_pause);
+   new_choices.double_sided  = optionbutton_get_state  (0, print_dbox_id, dbx_double_sided);
+   new_choices.type          = (vprint_type_id)tbx_radioarray_get_value(   print_dbox_id, dbx_type_base);
+
+   assert(new_choices.type < vprint_type_LIMIT);
+
+   choice_store->set_choices(&new_choices);
+ }
+
+
+
+
+static nevent_result dbx_fill(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { const char*           printer_name;
+   bool                  printer_available;
+   unsigned              pages;
+   const vprint_choices* choices;
+
+   assert(event_code == action_WINDOW_ABOUT_TO_BE_SHOWN);
+   assert(id_block->this_obj == print_dbox_id);
+
+   NOT_USED(handle);
+   NOT_USED(event_code);
+   NOT_USED(event);
+
+   /* Fill in the title */
+   printer_available = (xpdriver_info(NULL, NULL, NULL, NULL, (char**)&printer_name, NULL, NULL, NULL) == NULL);
+   if (!printer_available)
+    { printer_name = message_lookup("None");
+    }
+   window_set_title(0, print_dbox_id, printer_name);
+
+
+   /* Fade the "Print" gadget if the printer is not available */
+   tbx_gadget_faded_iff(print_dbox_id, dbx_print, !printer_available);
+
+
+   /* Fill in choices */
+   choices = choice_store->choices();
+
+   tbx_radioarray_set_value(print_dbox_id, dbx_all, choices->print_whole_document ? 0 : 1);
+
+   pages = document->pages(document_handle(id_block));
+
+   numberrange_set_bounds(numberrange_BOUND_UPPER, print_dbox_id, dbx_first, 0, pages, 0, 0);
+   numberrange_set_value(0, print_dbox_id, dbx_first, MIN(choices->first_page+1, pages));
+
+   numberrange_set_bounds(numberrange_BOUND_UPPER, print_dbox_id, dbx_last, 0, pages, 0, 0);
+   numberrange_set_value(0, print_dbox_id, dbx_last, MIN(choices->last_page+1, pages));
+
+
+   numberrange_set_value   (0, print_dbox_id, dbx_copies,          choices->copies);
+   optionbutton_set_state  (0, print_dbox_id, dbx_face_up_printer, choices->face_up);
+   optionbutton_set_state  (0, print_dbox_id, dbx_straight_path,   choices->straight_path);
+   optionbutton_set_state  (0, print_dbox_id, dbx_collate,         choices->collate);
+   optionbutton_set_state  (0, print_dbox_id, dbx_pause,           choices->pause);
+   optionbutton_set_state  (0, print_dbox_id, dbx_double_sided,    choices->double_sided);
+   tbx_radioarray_set_value(   print_dbox_id, dbx_type_base,       choices->type);
+
+   /* Fade range gadgets if the range isn't currently in use */
+   tbx_gadget_faded_iff(print_dbox_id, dbx_first, choices->print_whole_document);
+   tbx_gadget_faded_iff(print_dbox_id, dbx_last,  choices->print_whole_document);
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result save(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { assert(event_code == action_Save);
+   assert(id_block->this_obj == print_dbox_id);
+
+   NOT_USED(handle);
+   NOT_USED(event_code);
+   NOT_USED(event);
+   NOT_USED(id_block);
+
+   store_choices();
+   choice_store->save();
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result print(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { assert(event_code == action_Print);
+   assert(id_block->this_obj == print_dbox_id);
+
+   NOT_USED(handle);
+   NOT_USED(event_code);
+   NOT_USED(event);
+
+   store_choices();
+
+   document->handle = document_handle(id_block);
+   vprint_print(document, choice_store->choices());
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result new_page(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { unsigned first;
+   unsigned last;
+
+   assert(event_code == action_NUMBER_RANGE_VALUE_CHANGED);
+   assert(id_block->this_obj == print_dbox_id);
+
+   NOT_USED(handle);
+   NOT_USED(event_code);
+   NOT_USED(event);
+
+   first = numberrange_get_value(0, print_dbox_id, dbx_first);
+   last  = numberrange_get_value(0, print_dbox_id, dbx_last);
+
+   if (first > last)
+    { if (id_block->this_cmp == dbx_first)
+       { numberrange_set_value(0, print_dbox_id, dbx_last, first);
+       }
+
+      if (id_block->this_cmp == dbx_last)
+       { numberrange_set_value(0, print_dbox_id, dbx_first, last);
+       }
+    }
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result radio_click(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { const radiobutton_action_state_changed* state_change = (const radiobutton_action_state_changed *)event->data.reserved;
+
+   assert(event_code == action_RADIO_BUTTON_STATE_CHANGED);
+   assert(id_block->this_obj == print_dbox_id);
+
+   NOT_USED(handle);
+   NOT_USED(event_code);
+
+   /* Is it a new range type? */
+   if (id_block->this_cmp == dbx_range)
+    { tbx_gadget_faded_iff(print_dbox_id, dbx_first, !state_change->on);
+      tbx_gadget_faded_iff(print_dbox_id, dbx_last,  !state_change->on);
+    }
+
+   /* Is it four-up pamphlet printing? */
+   if (id_block->this_cmp == dbx_type_fourup)
+    { tbx_gadget_faded_iff(print_dbox_id, dbx_double_sided, state_change->on);
+      optionbutton_set_state(0, print_dbox_id, dbx_double_sided, FALSE);
+    }
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+void vprint_dbx_init(print_doc* doc, const vprint_choice_store* store)
+ { assert(print_dbox_id == toolbox_NULL_OBJECT);
+   assert(store);
+   assert(doc);
+
+   choice_store = store;
+   document     = doc;
+
+   print_dbox_id = tbx_shared_object_id("Print");
+   nevent_toolbox_register_handler(print_dbox_id, action_WINDOW_ABOUT_TO_BE_SHOWN, dbx_fill, NULL);
+   nevent_toolbox_register_handler(print_dbox_id, action_Save,  save,  NULL);
+   nevent_toolbox_register_handler(print_dbox_id, action_Print, print, NULL);
+   nevent_toolbox_register_handler(print_dbox_id, action_NUMBER_RANGE_VALUE_CHANGED, new_page, NULL);
+   nevent_toolbox_register_handler(print_dbox_id, action_RADIO_BUTTON_STATE_CHANGED, radio_click, NULL);
+ }

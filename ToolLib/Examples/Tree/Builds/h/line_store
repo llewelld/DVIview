@@ -1,0 +1,30 @@
+/*** line_storer.h ***/
+/* A line_processor that stores lines
+ * (c) Paul Field
+ * v1.00 - 21/11/95
+ */
+
+#include "line_processor.h"
+
+
+extern const line_processor line_storer;
+ /* Note: line_storer.initialise() empties the line store
+  *       line_storer.add_line() can throw an exception_NO_MEMORY exception
+  */
+
+
+
+/* Additional functions for accessing the line store */
+
+unsigned line_storer_num_lines(void);
+ /* Returns the number of lines in the line store
+  */
+
+void line_storer_get_line(unsigned index, colour *c, int *x0, int *y0, int *x1, int *y1);
+ /* Pre: index < line_storer_num_lines()
+  * Puts the details of the line with index 'index' into c,x0,y0,x1,y1
+  */
+
+void line_storer_process_lines(const line_processor *lines);
+ /* Applies the line processor 'lines' to the lines in the line store
+  */

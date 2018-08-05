@@ -1,0 +1,98 @@
+/*** saver.c ***/
+/* Handles "saveas" dialogue boxes which use the save_buffer
+ * (c) Paul Field
+ */
+
+#include "saver.h"
+
+#include <assert.h>
+#include "saveas.h"
+
+#include "exception.h"
+#include "hourglass.h"
+#include "nev_toolbox.h"
+#include "save_buffer.h"
+
+
+static nevent_result saver_save_file(bits action_no, toolbox_action* action, toolbox_block* id_block, void* handle)
+ { const char* filename = ((saveas_action_save_to_file *)action->data.reserved)->file_name;
+   saver_fn    perform_save = (saver_fn)handle;  /* n.b. not portable */
+
+   assert(action_no == action_SAVE_AS_SAVE_TO_FILE);
+   NOT_USED(action_no);
+
+   try
+    { save_buffer_create_for_file(filename, saveas_get_file_type(0, id_block->this_obj));
+
+      try
+       { hourglass_on();
+         perform_save(id_block->this_obj);
+         hourglass_off();
+         save_buffer_destroy(TRUE);
+         saveas_file_save_completed(TRUE, id_block->this_obj, filename);
+       }
+      catch
+       { save_buffer_destroy(FALSE);
+         throw();
+       }
+      catch_end
+    }
+   catch
+    { /* Use X form to ignore the error that is always returned for a FALSE call.
+       * We will report the exception instead
+       */
+      xsaveas_file_save_completed(FALSE, id_block->this_obj, filename);
+      throw();
+    }
+   catch_end
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result saver_save_memory(bits action_no, toolbox_action* action, toolbox_block* id_block, void* handle)
+ { saveas_action_fill_buffer* fill_buffer = (saveas_action_fill_buffer*)action->data.reserved;
+   saver_fn                   perform_save = (saver_fn)handle;  /* n.b. not portable */
+
+   assert(action_no == action_SAVE_AS_FILL_BUFFER);
+   NOT_USED(action_no);
+
+   if (fill_buffer->buffer == NULL)
+    { save_buffer_create_for_memory(id_block->this_obj, fill_buffer->size);
+      try
+       { hourglass_on();
+         perform_save(id_block->this_obj);
+         hourglass_off();
+         save_buffer_destroy(TRUE);
+       }
+      catch
+       { save_buffer_destroy(FALSE);
+         throw();
+       }
+      catch_end
+    }
+   return nevent_HANDLED;
+ }
+
+
+
+
+void saver_create(toolbox_o save_as_id, saver_fn perform_save)
+ {
+
+/* These three lines fix a bug in OSLib. The assert() will fire on versions of
+ * OSLib where the bug is fixed and so these lines can then be removed
+ */
+assert(class_SAVE_AS != 0x82bc0);  /* TRUE if OSLib bug still exists */
+#undef class_SAVE_AS
+#define class_SAVE_AS 0x82bc0
+
+   assert(toolbox_get_object_class(0, save_as_id) == class_SAVE_AS);
+   /* Unfortunately, there doesn't appear to be a way to check the object is type 3 */
+   assert(perform_save != NULL);
+
+   nevent_toolbox_register_handler(save_as_id, action_SAVE_AS_SAVE_TO_FILE, saver_save_file,   (void*)perform_save);
+   nevent_toolbox_register_handler(save_as_id, action_SAVE_AS_FILL_BUFFER,  saver_save_memory, (void*)perform_save);
+ }

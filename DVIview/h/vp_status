@@ -1,0 +1,13 @@
+/**** vp_status.h ****/
+/* System for reporting vprint's printing status
+ * (c) Paul Field
+ * v1.00 - 2/5/1996
+ *
+ * The current system uses the "Printing" template from the application's resource file
+ */
+
+#include "print_rep.h"
+
+
+/* Provide access to the status window's open(), close() and set_current() functions */
+extern print_reporter vp_status;

@@ -1,0 +1,59 @@
+/**** units.h ****/
+/* Factors and functions for converting between different units
+ * (c) Paul Field
+ */
+
+/* The macros provide facilities for integer arithmetic conversion
+ * between units. Some macros have an 'unsigned' variation (denoted by a _u prefix)
+ * which will be slightly more efficient but may only be applied to unsigned operands.
+ */
+
+enum
+ { OSinInch = 180,
+   DrawinOS = 256,
+   MM10inInch = 254,
+   DrawinInch = OSinInch * DrawinOS,
+   MillipointsinOS = 400,
+   MillipointsinInch = 72000
+ };
+
+
+#define ceiling_divide(a,b) (((a)+(b)-1)/(b))
+ /* Performs integer division with rounding up.
+  */
+
+int round_divide(int a, int b);
+#define round_divide_u(a,b) (((a)+(b)/2)/(b))
+ /* Performs integer division with the result rounded to the nearest integer.
+  */
+
+
+/** Macros for conversions which cannot be done by simple **/
+/** multiplication/division by the factors given above    **/
+
+/* Watch out for overflow - it is possible to implement x*a/b so as
+ * to avoid problems of overflow in x*a but it is more complicated
+ */
+
+#define DrawToMM10(d)   round_divide(  (d)*MM10inInch, DrawinInch)
+#define DrawToMM10_u(d) round_divide_u((d)*MM10inInch, DrawinInch)
+#define MM10ToDraw(d)   round_divide(  (d)*DrawinInch, MM10inInch)
+#define MM10ToDraw_u(d) round_divide_u((d)*DrawinInch, MM10inInch)
+
+#define OSToMM10(d)   round_divide(  (d)*MM10inInch, OSinInch)
+#define OSToMM10_u(d) round_divide_u((d)*MM10inInch, OSinInch)
+#define MM10ToOS(d)   round_divide(  (d)*OSinInch,   MM10inInch)
+#define MM10ToOS_u(d) round_divide_u((d)*OSinInch,   MM10inInch)
+
+#define MillipointsToMM10(d)   round_divide(  (d)*MM10inInch, MillipointsinInch)
+#define MillipointsToMM10_u(d) round_divide_u((d)*MM10inInch, MillipointsinInch)
+#define MM10ToMillipoints(d)   round_divide(  (d)*MillipointsinInch, MM10inInch)
+#define MM10ToMillipoints_u(d) round_divide_u((d)*MillipointsinInch, MM10inInch)
+
+
+void units_round_draw_to_pixel(int* x, int* y);
+ /* Pre:  *x and *y are coordinates in Draw units
+  * Post: *x and *y are the coordinates (in Draw units) of the
+  *       bottom left of the pixel that (*x,*y) was in.
+  *       (N.B. this depends on the current screen mode)
+  */

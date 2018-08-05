@@ -1,0 +1,33 @@
+/**** substitute.h ****/
+/* Substitutes fonts
+ * (c) Paul Field
+ */
+
+
+/* The prefix used to create a system font from a tex font name */
+#define substitute_tex_font_prefix "TeX."
+
+
+void substitute
+ ( const char* error_source,
+   const char* font_name,
+   const char** new_font_name,
+   const char** system_font,
+   double* aspect_ratio
+ );
+ /* Pre: error_source != NULL
+  *      font_name != NULL
+  *      new_font_name != NULL
+  *      system_font != NULL
+  *      aspect_ratio != NULL
+  *      error_source is used as the source for logging purposes (e.g. it could be the dvi file name)
+  *      font_name is the name of a TeX font (e.g. from a dvi file)
+  * Exceptions: os
+  *
+  * On exit:
+  *  new_font_name contains the name of a TeX font to use instead of font_name (it may be font_name).
+  *  system_font contains the name of a system font that should be used to render font_name
+  *  aspect_ratio contains the aspect ratio (width/height) to use for the TeX font and system font.
+  *
+  * The values 'returned' by this function are only valid until the next call of this function.
+  */

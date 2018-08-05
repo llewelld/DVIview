@@ -1,0 +1,142 @@
+/*** exception.c ***/
+/* C exception handling system
+ * (c) Paul Field
+ */
+
+#include "exception.h"
+
+#include <assert.h>
+#include <signal.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include "kernel.h"
+#include "backtrace.h"
+#include "debug_io.h"
+
+
+static exception current;
+_exception_block *_exception_list = NULL;
+
+
+#ifndef NDEBUG
+static bool exception_system_initialised = FALSE;
+
+enum { NeverReachHere = FALSE };
+
+
+static void exception_report(void)
+ /* Reports the current exception to stderr */
+ { switch(current.type)
+    { case exception_user:   fprintf(stderr, "User exception: %x\n", current.error.user_id);   break;
+      case exception_signal: fprintf(stderr, "Signal: %u\n", current.error.signal_id);         break;
+      case exception_os:     fprintf(stderr, "OS exception: %s\n", current.error.os->errmess); break;
+      default: assert(NeverReachHere);
+    }
+ }
+#endif
+
+
+
+
+void throw(void)
+ { _exception_block* first_block;
+
+   assert(exception_system_initialised);
+#if !defined(NDEBUG)
+   fputs("------------\n", stderr);
+   exception_report();
+   debug_io_flush();
+   backtrace();
+#endif
+
+   first_block = _exception_list;
+   if (first_block == NULL)
+    { exit(EXIT_FAILURE);
+    }
+   else
+    { _exception_list = first_block->previous;
+      longjmp(first_block->jmpbuf, 1);
+    }
+ }
+
+
+
+
+void throw_user(unsigned id)
+ { current.type          = exception_user;
+   current.error.user_id = id;
+   throw();
+ }
+
+
+
+
+void throw_os(const os_error* err)
+ { assert(err);
+
+   current.type     = exception_os;
+   current.error.os = err;
+   throw();
+ }
+
+
+
+
+void throw_string(const char* string)
+ { static os_error err;
+
+   assert(string);
+
+   strncpy(err.errmess, string, sizeof(err.errmess));
+   err.errmess[sizeof(err.errmess)-1] = '\0';
+   err.errnum = 0;
+   throw_os(&err);
+ }
+
+
+
+
+const exception* exception_current(void)
+ { assert(exception_system_initialised);
+
+   return &current;
+ }
+
+
+
+
+static void throw_signal(int sig)
+ { current.type            = exception_signal;
+   current.error.signal_id = sig;
+   signal(sig, throw_signal);  /* reinstate signal handler */
+   throw();
+ }
+
+
+
+
+static void throw_last_os(int sig)
+ { sig=sig;
+   signal(SIGOSERROR, throw_last_os);  /* reinstate signal handler */
+   throw_os((os_error*)_kernel_last_oserror());
+ }
+
+
+
+
+void exception_initialise(void)
+ { assert(!exception_system_initialised);
+
+   signal(SIGABRT, throw_signal);
+   signal(SIGFPE,  throw_signal);
+   signal(SIGILL,  throw_signal);
+   signal(SIGINT,  throw_signal);
+   signal(SIGSEGV, throw_signal);
+   signal(SIGTERM, throw_signal);
+   /*signal(SIGSTAK, throw_signal);*/
+   signal(SIGOSERROR, throw_last_os);
+#ifndef NDEBUG
+   exception_system_initialised = TRUE;
+#endif
+ }

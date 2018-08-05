@@ -1,0 +1,18 @@
+/*** treewindow.h ***/
+/* A (shared) window containing a tree
+ * The tree is drawn from the lines in line_store
+ * (c) Paul Field 1995
+ * v1.00 - 22/11/1995
+ */
+
+
+void tree_window_initialise(void);
+ /* Exceptions: os
+  * Sets up event handlers etc. necessary for the tree window
+  */
+
+void tree_window_update(void);
+ /* Exceptions: os
+  * Inform the tree_window that the line_store has been changed
+  * and so the window should be redrawn
+  */

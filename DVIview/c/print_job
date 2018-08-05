@@ -1,0 +1,85 @@
+/**** print_job.c ****/
+/* Manage a print job
+ * (c) Paul Field
+ */
+
+#include "print_job.h"
+
+#include <assert.h>
+
+#include "pdriver.h"
+#include "osfind.h"
+
+#include "exception.h"
+
+
+
+
+/* Variables involved in a print job */
+static os_f job_file          = 0;
+static os_f previous_job_file = 0;
+
+
+
+
+
+void print_job_start(const char* name)
+ { assert(job_file == 0);
+   assert(name);
+
+   job_file = osfind_openout(osfind_NO_PATH, "printer:", NULL);
+   try
+    { previous_job_file = pdriver_select_job(job_file, name);
+    }
+   catch
+    { osfind_close(job_file);
+      job_file = 0;
+      throw();
+    }
+   catch_end
+ }
+
+
+
+void print_job_pause(void)
+ { assert(job_file != 0);
+
+   pdriver_select_job(0, 0);
+ }
+
+
+
+
+void print_job_resume(void)
+ { os_f previous;
+
+   assert(job_file != 0);
+
+   previous = pdriver_select_job(job_file, 0);
+
+   assert(previous == 0);
+ }
+
+
+
+
+void print_job_abort(void)
+ { if (job_file != 0)
+    { xpdriver_abort_job(job_file);
+      xpdriver_select_job(previous_job_file, 0, NULL);
+      xosfind_close(job_file);
+      job_file = 0;
+    }
+ }
+
+
+
+
+void print_job_end(void)
+ { assert(job_file != 0);
+
+   pdriver_end_job(job_file);
+   pdriver_select_job(previous_job_file,0);
+   osfind_close(job_file);
+   job_file = 0;
+ }

@@ -1,0 +1,45 @@
+/**** magnifier.h ****/
+/* Magnifier window
+ * (c) Paul Field
+ *
+ * v1.00 - 23/5/1996
+ */
+
+/* A magnifier is notionally: empty | <page, tracker, x, y>
+ *   where (x,y) is a coordinate in OS units and assumes the
+ *   page origin is at the top left of the page,
+ *   and tracker is a pair (tracker_function, handle).
+ *
+ * If magnifier == empty, it displays nothing, otherwise
+ * it displays page so that (x,y) is at the centre
+ * of the magnifier.
+ *
+ * If magnifier != empty then the tracker will be activated every so
+ * often. The tracker will, generally, call magnifier_set_position() and
+ * magnifier_set_empty() to keep the magnifier up-to-date.
+ */
+
+#include "page.h"
+
+typedef void (*magnifier_tracker_fn)(void* handle);
+
+
+void magnifier_init(void);
+ /* Post: magnifier == empty
+  * Initialise the magnifier window.
+  * Call before optionsfile_load().
+  */
+
+void magnifier_set_page(page* p, int x, int y, magnifier_tracker_fn, void* handle);
+ /* Pre:  p != NULL
+  * Post: magnifier == <p,t,x,y>, where t = (tracker_fn, handle)
+  */
+
+void magnifier_set_position(int x, int y);
+ /* Pre:  magnifier == <old_page, old_t, old_x, old_y>
+  * Post: magnifier == <old_page, old_t, x, y)
+  */
+
+void magnifier_set_empty(void);
+ /* Post: magnifier == empty
+  */

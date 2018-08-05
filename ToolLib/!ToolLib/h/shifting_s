@@ -1,0 +1,17 @@
+/*** shifting_send.h ***/
+/* Allow data in a shifting block to be sent to the save_buffer
+ * (c) Paul Field
+ * v1.00 - 23/4/1996
+ */
+
+#include <stddef.h>
+
+void shifting_send(const void* bytes, size_t size);
+ /* Pre: bytes != NULL
+  * Exceptions: os, exception_NO_MEMORY
+  *
+  * Stores 'size' bytes from bytes in to the save_buffer
+  * (sending them to their destination when the buffer is full)
+  * It's OK to pass a shifting-allocated block to this function - stack
+  * checking is disabled and it will not extend the malloc heap.
+  */

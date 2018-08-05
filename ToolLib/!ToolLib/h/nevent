@@ -1,0 +1,110 @@
+/*** nevent.h ***/
+/* Alternative interface to Acorn's event library that:
+ *    uses OSLib structures,
+ *    throws exceptions on error,
+ *    performs debugging checks,
+ *    generates lists of the messages and toolbox actions used by your application for use with toolbox_initialise(),
+ *    allows de-registration of all handlers attached to a particular object,
+ *    is split into parts so your executable only includes the event handling code that it needs,
+ *    automatically sets the wimp poll flag based on the handlers registered
+ *
+ * (c) Paul Field
+ * v1.00 - 1/9/1995
+ * v1.10 - 15/9/1995  : Added handler group registration facilities
+ * v1.11 - 23/11/1995 : Group registration moved to separate file
+ * v2.00 - 24/5/1996  : Major re-write. No longer relies on Acorn's event library.
+ */
+
+
+#ifndef nevent_H
+#define nevent_H
+
+#ifndef toolbox_H
+#include "toolbox.h"
+#endif
+
+
+/* Values to be returned by event handlers */
+typedef enum nevent_result_enum
+ { nevent_NOT_HANDLED,
+   nevent_HANDLED
+ }
+nevent_result;
+
+
+
+/* Value used to indicate that handler is not tied to a particular object */
+#define nevent_ALL_OBJECTS ((toolbox_o)(-1))
+
+
+
+wimp_event_no nevent_poll(wimp_block* event_block, void* poll_word);
+/* Exceptions: os
+ *
+ * Calls the SWI Wimp_Poll and then calls any suitable event handlers
+ * registered for the event/message/action returned.
+ * Returns the Wimp event code of the event and the event details are placed
+ * in 'event_block'.
+ *
+ * Note: event_block and/or poll_word may be NULL
+ */
+
+
+wimp_event_no nevent_poll_idle
+ ( wimp_block*   event_block,
+   unsigned int  earliest,
+   void*         poll_word
+ );
+/* As nevent_poll() except that Null events will not be returned until
+ * the time (as returned by os_read_monotonic_time()) 'earliest' has passed.
+ */
+
+
+
+typedef struct nevent_poll_controller_str
+ { wimp_poll_flags set;
+   wimp_poll_flags clear;
+ }
+nevent_poll_controller;
+
+ /* Invariant: (controller.set & controller.clear) == 0
+  *
+  * This structure controls the poll mask passed to the Wimp_Poll SWI
+  * (see PRM 3-117). The nevent system automatically sets the mask
+  * to enable only those events for which handlers are registered.
+  * The controller allows you to override these settings.
+  * controller.set forces bits in the mask to be set, controller.clear
+  * forces bits to be clear.
+  */
+
+
+void nevent_set_poll_control(nevent_poll_controller);
+ /* Set the current poll controller
+  */
+
+
+nevent_poll_controller nevent_force_poll_bits_set(wimp_poll_flags m);
+ /* Adjusts the current poll controller so that the set bits in m
+  * will be set in the wimp poll mask.
+  * Returns the old state of the poll controller (which can be restored
+  * with nevent_set_poll_control()).
+  */
+
+
+nevent_poll_controller nevent_force_poll_bits_clear(wimp_poll_flags);
+ /* Adjusts the current poll controller so that the set bits in m
+  * will be clear in the wimp poll mask.
+  * Returns the old state of the poll controller (which can be restored
+  * with nevent_set_poll_control()).
+  */
+
+
+
+void nevent_initialise(toolbox_block* b);
+/* Sets up the event system - call this before any other routines in this file.
+ * 'b' should be the same as those passed to toolbox_initialise().
+ *
+ * If you are using the application system, this call will be made for you.
+ */
+
+#endif

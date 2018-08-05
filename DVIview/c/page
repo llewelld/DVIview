@@ -1,0 +1,556 @@
+/**** page.c ****/
+/* Loads and manages a page
+ * (c) Paul Field 1995
+ */
+
+#include "page.h"
+
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "macros.h"
+
+#include "allocate.h"
+#include "box.h"
+//#include "debug_io.h"
+#include "error.h"
+#include "exception.h"
+#include "list.h"
+#include "log.h"
+#include "message.h"
+#include "save_buffer.h"
+
+#include "command_processor.h"
+#include "draw_utils.h"
+#include "mask.h"
+#include "picture.h"
+#include "page_diag.h"
+#include "special.h"
+#include "units.h"
+
+
+enum
+ { exception_TooManyFonts = 0x100
+ };
+
+
+struct page_str
+ { unsigned            references;    /* reference == 0  <-> diagram == NULL */
+   page_diagram*       diagram;
+   int                 byte_stream_pointer;
+   list*               picture_list;
+   unsigned            number;
+   const page_context* context;
+   /*int          count[10];*/
+ };
+
+
+static page* loading_page;  /* Page currently being loaded */
+
+
+
+/* A mapping of various user errors to error tags */
+
+typedef struct error_pair_str
+ { unsigned    user_id;
+   const char* error_tag;
+ }error_pair;
+
+static error_pair error_mapping[] =
+ { { exception_UNKNOWN_FONT,      "UnknownFont"      },
+   { exception_UNDEFINED_COMMAND, "UndefinedCommand" }
+ };
+
+
+
+
+
+/**************************************************************************/
+/* The page loading code
+ */
+
+
+static void page_throw_error(const page* p, const char* description_tag)
+ { enum { description_LIMIT = 100 };
+
+   char description[description_LIMIT];
+   char page_num_string[UNSIGNED_WIDTH+1];
+
+   strncpy(description, message_lookup(description_tag), description_LIMIT);
+   description[description_LIMIT-1] = '\0';
+
+   sprintf(page_num_string, "%u", p->number);
+
+   throw_string(message_lookup_and_substitute("DVIPageError", description, page_num_string, byte_stream_name(p->context->stream), NULL));
+ }
+
+
+
+
+static void page_throw_current_error(const page* p)
+ { const exception* e;
+
+   e = exception_current();
+   if (e->type == exception_user)
+    { unsigned error_limit;
+      unsigned error_idx;
+
+      error_limit = COUNT(error_mapping);
+      for (error_idx = 0; error_idx < error_limit; error_idx++)
+       { if (error_mapping[error_idx].user_id == e->error.user_id)
+          { page_throw_error(p, error_mapping[error_idx].error_tag);
+          }
+       }
+    }
+
+   throw();
+ }
+
+
+
+
+static void page_description(const page* p, size_t description_limit, char* description)
+ { const char*  page_lookup;
+   size_t       page_lookup_len;
+   size_t       page_len_max;
+   size_t       page_len;
+
+   page_len_max = description_limit-1 - UNSIGNED_WIDTH - 1; /* -1 for space between "Page" and number */
+
+   page_lookup = message_lookup("Page");
+   page_lookup_len = strlen(page_lookup);
+
+   assert(page_lookup_len <= page_len_max);
+
+   page_len = MIN(page_lookup_len, page_len_max);
+   memcpy(description, page_lookup, page_len);
+
+   sprintf(description + page_len, " %u", p->number);
+ }
+
+
+
+
+static void page_process_special(int x, int y, const char* special)
+ { enum { description_limit = UNSIGNED_WIDTH + 20 };
+
+   char description[description_limit];
+
+   /* Convert (x,y) to draw units */
+   x =  (int)(x * loading_page->context->dvi_to_draw);
+   y = -(int)(y * loading_page->context->dvi_to_draw);
+
+
+   page_description(loading_page, description_limit, description);
+
+   /* Catch and report errors with diagrams or \special and then continue as if nothing had happened */
+   try
+    { special_process(special, byte_stream_name(loading_page->context->stream), description, x, y, loading_page->picture_list);
+    }
+   catch
+    { const exception* e;
+
+      e = exception_current();
+      if (e->type == exception_os)
+       { log_add_sub_message(byte_stream_name(loading_page->context->stream), description, e->error.os->errmess);
+       }
+      else
+       { if (e->type != exception_user || e->error.user_id != exception_REPORTED)
+          { error_report_exception(e);
+          }
+       }
+    }
+   catch_end
+ }
+
+
+
+
+
+static void page_load(page* p)
+ { static const renderer page_render =
+    { page_diagram_put_char,
+      page_diagram_put_rule,
+      page_process_special,
+      page_diagram_set_scale,
+      page_diagram_get_scale
+   };
+
+   assert(p);
+
+
+   loading_page = p;
+   p->diagram = page_diagram_construct(p->context->dvi_to_draw);
+
+   try
+    { byte_stream_set_position(p->context->stream, p->byte_stream_pointer);
+      command_processor_page(p->context->fonts, p->context->stream, &page_render, p->context->dvi_to_draw);
+
+      page_diagram_finish();
+    }
+   catch
+    { page_diagram_destruct(p->diagram);
+      p->diagram = NULL;
+
+      page_throw_current_error(p);
+    }
+   catch_end
+ }
+
+
+
+/************************************************************************/
+/* Public interface
+ */
+
+
+
+page* page_construct(int pointer, int count[10], const page_context* context)
+ { page* p;
+
+   p = memory_allocate(sizeof(struct page_str));
+
+   try
+    { p->references   = 0;
+      p->diagram      = NULL;
+      p->byte_stream_pointer = pointer;
+      p->picture_list = list_create();
+      p->number       = count[0];
+      p->context      = context;
+      /*memcpy(p->count, count, sizeof(p->count));*/
+      NOT_USED(count);
+    }
+   catch
+    { memory_free(p);
+      throw();
+    }
+   catch_end
+
+   return p;
+ }
+
+
+
+
+void page_destruct(page* p)
+ { if (p != NULL)
+    { assert(p->references == 0 && p->diagram == NULL);
+      assert(list_is_empty(p->picture_list));
+
+      list_destroy(p->picture_list);
+      memory_free(p);
+    }
+ }
+
+
+
+
+void page_inc_reference(page* p)
+ { assert(p);
+
+   if (p->references == 0)
+    { assert(p->diagram == NULL);
+      page_load(p);
+    }
+   p->references++;
+ }
+
+
+
+
+void page_dec_reference(page* p)
+ { if (p != NULL)
+    { assert(p->references != 0);
+
+      if (--p->references == 0)
+       { page_diagram_destruct(p->diagram);
+         p->diagram = NULL;
+         while (!list_is_empty(p->picture_list))
+          { picture_destruct(list_remove_head(p->picture_list));
+          }
+       }
+    }
+ }
+
+
+
+
+void page_draw(const page* p, int x, int y, unsigned scale_percent, const os_box *clip)
+ { list_ptr ptr;
+
+   assert(p);
+   assert(p->diagram);
+
+   /* Convert (x,y) from top left of the page to top left of the page contents */
+   x += (p->context->left_offset * (int)scale_percent)/100;
+   y -= (p->context->top_offset  * (int)scale_percent)/100;
+
+#ifdef PRINT_VERBOSE
+         fprintf(stderr, "page: page origin is (%d,%d)\n", x,y);
+         fprintf(stderr, "page: about to draw pictures\n");
+         debug_io_flush();
+#endif
+
+   for (ptr = list_ptr_head(p->picture_list); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+    { picture_draw(list_ptr_element(ptr), x, y, scale_percent, clip);
+    }
+
+#ifdef PRINT_VERBOSE
+         fprintf(stderr, "page: about to draw main page contents\n");
+         debug_io_flush();
+#endif
+
+   page_diagram_draw(p->diagram, x, y, scale_percent, clip);
+ }
+
+
+
+
+void page_bounds(const page* p, int x, int y, os_box* bounds)
+ { list_ptr ptr;
+
+   assert(p);
+   assert(p->diagram);
+
+   /* Convert (x,y) from top left of the page to top left of the page contents */
+   x += p->context->left_offset;
+   y -= p->context->top_offset;
+
+   page_diagram_bounds(p->diagram, x, y, bounds);
+
+   for (ptr = list_ptr_head(p->picture_list); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+    { os_box p_bounds;
+
+      picture_clipped_bounds(list_ptr_element(ptr), x, y, 100, &p_bounds);
+      box_bounds(bounds, &p_bounds, bounds);
+    }
+ }
+
+
+
+
+static void page_unclipped_bounds(const page* p, int x, int y, os_box* bounds)
+ /* Gives the bounds assuming that pictures aren't clipped (which they aren't
+  * when they're saved to a Draw file
+  */
+ { list_ptr ptr;
+
+   assert(p);
+   assert(p->diagram);
+
+   page_diagram_bounds(p->diagram, x, y, bounds);
+
+   for (ptr = list_ptr_head(p->picture_list); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+    { os_box p_bounds;
+
+      picture_unclipped_bounds(list_ptr_element(ptr), x, y, 100, &p_bounds);
+      box_bounds(bounds, &p_bounds, bounds);
+    }
+ }
+
+
+
+
+void page_add_fonts_to_set(const page* p, font_set* page_fonts)
+ { command c;
+
+   assert(p);
+
+   if (p->diagram)
+    { /* Page is loaded - extract fonts from page_diag and pictures */
+      list_ptr ptr;
+
+      page_diagram_add_fonts_to_set(p->diagram, page_fonts);
+
+      for (ptr = list_ptr_head(p->picture_list); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+       { picture_add_fonts_to_set(list_ptr_element(ptr), page_fonts);
+       }
+    }
+   else
+    { /* Page not loaded - extract fonts from dvi file and picture files */
+
+      enum { description_limit = UNSIGNED_WIDTH + 20 };
+      char description[description_limit];
+
+      page_description(p, description_limit, description);
+
+      byte_stream_set_position(p->context->stream, p->byte_stream_pointer);
+
+      /* Skip bop command */
+      dviops_read_command(p->context->stream, &c);
+      dviops_command_finished(&c);
+
+      /* This shouldn't happen - it's already checked when the pages are scanned by dvifile */
+      if (c.code != command_bop)
+       { page_throw_error(p, "FileCorrupt");
+       }
+
+      /* Run through commands in the page looking for fnt commands and specials (for pictures) */
+      do
+       { dviops_read_command(p->context->stream, &c);
+         switch(c.code)
+          { case command_fnt:
+              /* Add font to font list if it isn't already there */
+             { const tex_font* current_font;
+
+               if (!font_table_get_font(p->context->fonts, c.parameters.font_no, &current_font))
+                { /* Font not present in font table */
+                  page_throw_error(p, "UnknownFont");
+                }
+
+               tex_font_add_render_fonts_to_set(current_font, page_fonts);
+               break;
+             }
+
+            case command_xxx:
+              special_add_fonts_to_set(c.parameters.string, byte_stream_name(p->context->stream), description, page_fonts);
+              break;
+          }
+         dviops_command_finished(&c);
+       }
+      while(c.code != command_eop);
+    }
+ }
+
+
+
+
+void page_save(const page* p, int x, int y)
+ { enum { major_version = 201 };
+   enum { minor_version = 0 };
+   os_box    bounds;
+   font_set* fonts;
+   mask*     mask;
+
+   assert(p);
+   assert(p->diagram);
+
+   /* Convert (x,y) from top left of the page to top left of the page contents */
+   x += p->context->left_offset;
+   y -= p->context->top_offset;
+
+   /* Output draw file header */
+   save_buffer_send_string("Draw");
+   save_buffer_send_unsigned(major_version);
+   save_buffer_send_unsigned(minor_version);
+   save_buffer_send_string("DVIview     ");
+   page_unclipped_bounds(p, x, y, &bounds);
+   save_buffer_send(&bounds, sizeof(os_box));
+
+
+   fonts = font_set_construct();
+   try
+    { set_ptr  font_ptr;
+      unsigned font_id;
+
+      /* Collect up fonts and give them draw file font numbers */
+      page_add_fonts_to_set(p, fonts);
+
+      if (set_elements(fonts) >= 256)
+       { throw_user(exception_TooManyFonts);
+       }
+
+      font_id = 1;
+      for (font_ptr = set_ptr_first(fonts); !set_ptr_past_the_end(font_ptr); set_ptr_inc(&font_ptr))
+       { font_info* info;
+
+         info = set_ptr_element(font_ptr);
+         info->tag.id = font_id++;
+       }
+
+
+      /* Output the font table */
+      draw_output_font_table(fonts);
+
+
+      /* Output pictures (creating clipping mask in the process) */
+      mask = mask_construct();
+      try
+       { list_ptr pic_ptr;
+
+         for (pic_ptr = list_ptr_head(p->picture_list); !list_ptr_past_the_end(pic_ptr); list_ptr_inc(&pic_ptr))
+          { picture* pic;
+            os_box   b;
+
+            pic = list_ptr_element(pic_ptr);
+
+            picture_save(pic, x, y, fonts);
+
+            picture_unclipped_bounds(pic, x, y, 100, &b);
+            mask_cover(mask, &b);
+
+            picture_clipped_bounds(pic, x, y, 100, &b);
+            mask_hole(mask, &b);
+          }
+
+         /* Output clipping mask */
+         mask_save(mask);
+       }
+      catch
+       { mask_destruct(mask);
+         throw();
+       }
+      catch_end
+
+      mask_destruct(mask);
+
+
+      /* Output text and rules */
+      page_diagram_save(p->diagram, x, y, fonts);
+
+      set_destroy(fonts);
+    }
+   catch
+    { set_destroy(fonts);
+      throw();
+    }
+   catch_end
+ }
+
+
+
+
+unsigned page_estimate_save_size(const page* p)
+ { list_ptr ptr;
+   unsigned size;
+
+   size = page_diagram_estimate_save_size(p->diagram);
+   for (ptr = list_ptr_head(p->picture_list); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+    { size += picture_estimate_save_size(list_ptr_element(ptr));
+    }
+   return size;
+ }
+
+
+
+
+
+#ifndef NDEBUG
+#include <stdio.h>
+void page_debug_output(const page* p)
+ { list_ptr ptr;
+
+   fprintf
+    ( stderr,
+      "  References = %u\n"
+      "  diagram = %p\n"
+      "  file pointer = %d\n"
+      "  picture list:\n ",
+      p->references,
+      p->diagram,
+      p->byte_stream_pointer
+    );
+/* output counts
+   for (n=0; n < 10; n++)
+    { fprintf(stderr, "%d ", p->count[n]);
+    }
+*/
+
+   for (ptr = list_ptr_head(p->picture_list); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+    { picture_debug_output(list_ptr_element(ptr));
+    }
+
+   fputc('\n', stderr);
+ }
+#endif

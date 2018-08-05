@@ -1,0 +1,14 @@
+/*** viewer.h ***/
+/* A viewer is a window containing a picture.
+ * Viewers automatically construct themselves when the user loads a picture
+ * into this program
+ * (c) Paul Field 1995
+ * v1.00 - 15/9/1995
+ * v1.10 - 9/10/1995 - A viewer now views a picture rather than a sprite
+ */
+
+
+void viewer_initialise(void);
+ /* Exceptions: os
+  * Sets up event handlers etc. necessary for the viewer sub-system
+  */

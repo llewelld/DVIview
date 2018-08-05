@@ -1,0 +1,4 @@
+| !Boot file for !GFXView
+| (c) Paul Field
+
+IconSprites <Obey$Dir>.!Sprites

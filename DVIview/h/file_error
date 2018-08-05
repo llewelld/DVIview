@@ -1,0 +1,25 @@
+/*** file_error.h ***/
+/* Create exceptions for file errors */
+
+#include "file.h"
+
+
+const char* file_error_named(const char* filename, const char* type, const char* description_tag);
+ /* Returns a message along the lines of:
+  *   <description> in <type> file '<filename>'
+  * <description> is looked up in the messages file using description_tag
+  */
+
+const char* file_error(const file* f, const char* type, const char* description_tag);
+ /* Returns a message along the lines of:
+  *   <description> in <type> file '<filename>'
+  * <description> is looked up in the messages file using description_tag
+  */
+
+void file_error_named_throw(const char* filename, const char* type, const char* description_tag);
+ /* Throws a string exception containing the result of file_error_named(filename, type, description_tag)
+  */
+
+void file_error_throw(const file* f, const char* type, const char* description_tag);
+ /* Throws a string exception containing the result of file_error(f, type, description_tag)
+  */

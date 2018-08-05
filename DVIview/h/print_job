@@ -1,0 +1,40 @@
+/**** print_job.h ****/
+/* Manage a print job
+ * (c) Paul Field
+ * v1.00 - 1/5/1996
+ */
+
+
+void print_job_start(const char* name);
+ /* Pre: print_job is not currently managing a print job
+  * Starts a print job called name.
+  * All plotting calls will be sent to the printer.
+  */
+
+
+void print_job_pause(void);
+ /* Pre: print_job is currently managing a print job
+  *      print_job's print job is NOT paused
+  * Pauses the print job. Plotting calls will no longer
+  * be sent to the printer.
+  * Call print_job_resume() to resume.
+  */
+
+
+void print_job_resume(void);
+ /* Pre: print_job is currently managing a print job
+  *      print_job's print job is paused
+  * Un-pauses the print job.
+  * All plotting calls will be sent to the printer.
+  */
+
+
+void print_job_abort(void);
+ /* Aborts the print job, if there is one (use this call when there's an error).
+  */
+
+
+void print_job_end(void);
+ /* Pre: print_job is currently managing a print job
+  * Ends the print job.
+  */

@@ -1,0 +1,168 @@
+!Tree Tutorial
+~~~~~~~~~~~~~~
+
+0) Setting up
+~~~~~~~~~~~~~
+Load the program and click on the tree which should appear on the icon bar.
+
+Fill in these values to the tree parameter window:
+
+Segments:            1
+Segment length:      10
+Branch scale:        1.00
+Branch scale scale:  1.00
+Left branch offset:  0.50
+Right branch offset: 0.50
+Branch angle:        40
+Angle scale:         1.00
+Depth:               2
+
+Click on "Draw tree" and a window should open with a very simple tree in it.
+
+
+We can now explore what the various parameters do:
+
+1) Segments
+~~~~~~~~~~~
+Change the segments value to 2 and then 3 (clicking on "Draw tree" each
+time).
+
+You can see that a segment is a 'trunk' with two branches sticking out and
+that a tree (and also each branch) is made by stacking a number of segments
+together.
+
+Leave segments set to 3 for the remaining sections.
+
+
+2) Segment length
+~~~~~~~~~~~~~~~~~
+Try altering the segment length parameter and clicking on "Draw Tree". You'll
+see that this simply controls the length of the 'trunk' in the tree. You can
+use it to alter the overall size of the tree.
+
+Set segment length to 10 for the remaining sections.
+
+
+3) Branch scale
+~~~~~~~~~~~~~~~
+
+Set branch scale to 0.7, 0.5, 0.3 and 0.1.
+You'll see that this parameter scales the branches of the tree. So if the
+segment length is 10mm and the branch scale is 0.5 then the segments in the
+branches will each be 5mm long.
+
+If branch scale is greater than 1.00 then the branches will be longer than
+the main trunk. Try 1.5 to see what I mean.
+
+Set branch scale to 1.00 for the remaining sections.
+
+
+4) Branch scale scale
+~~~~~~~~~~~~~~~~~~~~~
+
+Yes, this parameter has an extremely un-intuitive name.
+
+Try setting it to 0.8, 0.5 and 1.5.
+
+You'll see that this parameter changes the way branches in different segments
+are scaled so, for example, your tree can be made to 'taper' towards the top.
+
+The reason the parameter is called 'branch scale scale' is because it scales
+the 'branch scale' parameter as you progress along segments. For example, if
+branch scale is 1.0 and branch scale scale is 0.8 then the lowest set of
+branches will be the same length as the trunk, the nest set will be 0.8 times
+the length and the third set will be 0.64 (0.8 squared) times the length.
+
+Set branch scale scale to 1.00 for the remaining sections.
+
+
+5) Left and right branch offsets
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Try altering left branch offset to 0, 0.25 and 1.
+
+You'll see that these two parameters allow you to alter the position of the
+branches within a segment (e.g. should they be at the top or the bottom of
+the segment) and also to make the tree asymmetrical (by having different
+values for left and right offsets).
+
+Values near 0 seems to give bush-like trees wheras values near 1 give more
+traditional-looking trees.
+
+Set these parameters back to 0.5 for the remaining sections.
+
+
+6) Branch angle
+~~~~~~~~~~~~~~~
+
+Try altering this to 10, 80 and 110
+
+Fairly obviously, this changes the angle at which the branches sprout from
+the trunk.
+
+Set this to 40 for the remaining sections.
+
+
+7) Depth (yes, I know I've skipped Angle scale)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Change segments to 1 and then try depths of 3,4,5 and 6.
+
+You'll see that depth changes the number of branches that you must
+travel along to get from the trunk to a leaf.
+
+A word of warning: If you have a large depth then the number of segments
+should be small and vice-versa. If they are both 'large' together the tree
+will be extremely complex and will either take a very long time to generate
+and draw or else the program will run out of memory and generate an error.
+
+Set depth to 6 for the last section.
+
+
+8) Angle scale
+~~~~~~~~~~~~~~
+
+Try changing this to 0.9, 0.8, 0.7, 0.6, 0.5, 1.1, 1.2 and 1.3
+
+You'll see that the angle scale alters the angle of the branches as you
+proceed towards the leafs. Taking 0.5 as an example, the branches from the
+main trunk come out at 40 degrees (the value of branch angle). The next level
+of branches come from their branches at an angle of 0.5*40 = 20 degrees. The
+next level at 0.5*20 = 10 degrees and so on. This lets you get a basic tree
+shape but with whispy branches and plenty of space within the tree.
+
+
+9) An example
+~~~~~~~~~~~~~
+Here's an example tree:
+
+Segments:            2
+Segment length:      12
+Branch scale:        1.00
+Branch scale scale:  0.80
+Left branch offset:  0.5
+Right branch offset: 0.5
+Branch angle:        30
+Angle scale:         0.94
+Depth:               6
+
+
+Try changing these parameters:
+Left branch offset:  0.8
+Right branch offset: 0.25
+
+
+10) Things I might add
+~~~~~~~~~~~~~~~~~~~~~~
+
+I can possibly add other parameters if necessary. One possibility is a
+parameter that shrinks the segment size along a branch (the branches can be
+shrunk from segment to segment using branch scale scale but the segments
+themselves are all the same length). Another possibility is to allow different
+branch angle, branch scale etc. on the left and right.
+Also I haven't done anything much about colour yet.
+
+I could add facilities for loading and saving the parameters.
+
+I could add a facility for automatically scaling the tree to be a particular
+size but you can use segment length to do this manually.

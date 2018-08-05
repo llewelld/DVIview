@@ -1,0 +1,45 @@
+/**** sys_font_list.h ****/
+/* Maintains a list of system fonts
+ * (c) Paul Field
+ */
+
+#include "list.h"
+
+
+list_ptr sys_font_list_head(void);
+ /* Exceptions: none
+  *
+  * Returns a pointer to the head of the list, so you
+  * can traverse all the system font names.
+  * Do not modify the list using this pointer
+  */
+
+
+bool sys_font_list_contains(const char* font_name);
+ /* Pre: font_name != NULL
+  * Exceptions: none
+  *
+  * Returns TRUE iff font_name is in the list of system fonts.
+  * (Comparison of font names is case-insensitive).
+  */
+
+
+void sys_font_list_update(void);
+ /* Exceptions: exception_NO_MEMORY
+  *
+  * Re-creates the list of system fonts (use if you think the
+  * system fonts may have changed)
+  */
+
+
+void sys_font_list_construct(void);
+ /* Exceptions: exception_NO_MEMORY
+  *
+  * Creates the list of system fonts (call before any other function in this module).
+  */
+
+
+void sys_font_list_destruct(void);
+ /* Frees all resources associated with the system font list.
+  * (Typically, you would call this at the end of the program)
+  */

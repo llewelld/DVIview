@@ -1,0 +1,69 @@
+/**** draw_utils.h ****/
+/* Miscellaneous utilities for manipulating draw objects
+ * (c) Paul Field
+ */
+
+#include "drawfile.h"
+#include "font_set.h"
+
+
+void* draw_item_at(drawfile_diagram** d, unsigned offset);
+#define draw_item_at(d,offset) ((void*)((byte*)(*(d)) + (offset)))
+ /* Returns a pointer to the information at offset in the drawfile d
+  */
+
+
+drawfile_object* draw_object_at(drawfile_diagram** d, unsigned offset);
+#define draw_object_at(d,offset) ((drawfile_object*)draw_item_at(d, offset))
+ /* Returns the drawfile object at offset
+  */
+
+
+
+void draw_font_table_to_set(drawfile_diagram* const * d, unsigned table_offset, font_set* fonts);
+ /* Pre:  (byte*)(*d) + table_offset is a font table object
+  * Post: fonts = fonts union the fonts in table
+  * Exceptions: exception_NO_MEMORY
+  * On exception, some fonts may have been added to fonts
+  */
+
+
+void draw_font_table_mapping(drawfile_diagram* const * d, unsigned table_offset, const font_set* fonts, byte map[256]);
+ /* Pre:  (byte*)(*d) + table_offset is a font table object
+  *       Every font in the font_table is also in fonts
+  *       The fonts in fonts have an id in the range 1-255 inclusive
+  * Post: For every (id,font) in the font table, map[id] = id2 where (id2, font) is an element of fonts
+  *       (i.e. map maps between fonts in the font_table and those in some other font_table)
+  */
+
+
+bool draw_find_font_table(drawfile_diagram* const * d, size_t length, unsigned* offset);
+ /* Returns: TRUE and offset is set to the offset of the font table in the diagram
+  *       or FALSE if there is no font table in the diagram
+  */
+
+
+void draw_output_objects
+ ( drawfile_diagram* const * d,
+   size_t             length,
+   int                x,
+   int                y,
+   double             scale_x,
+   double             scale_y,
+   byte               font_id_map[256]
+ );
+ /* Pre: (x,y) is the draw file origin
+  *      length is the length of the diagram pointed to by d
+  *
+  * Outputs the object in d using the save_buffer module allowing scaling and translation to be applied to the object.
+  * Font table objects and options objects are ignored and text objects using font number 'id' are changed to use
+  * font number font_id_map[id].
+  */
+
+
+void draw_output_font_table(const font_set* fonts);
+ /* Pre: fonts != NULL
+  *      The fonts in fonts have an id in the range 1-255 inclusive
+  * Outputs a font table object using the save_buffer module.
+  * (If fonts is empty, no table will be output)
+  */

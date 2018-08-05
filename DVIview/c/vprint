@@ -1,0 +1,34 @@
+/**** vprint.c ****/
+/* The vprint printing system
+ * (c) Paul Field
+ */
+
+#include "vprint.h"
+
+#include <assert.h>
+
+#include "exception.h"
+
+#include "print_core.h"
+#include "vp_iter.h"
+#include "vp_status.h"
+
+
+
+void vprint_print(const print_doc* doc, const vprint_choices* choices)
+ { assert(doc != NULL);
+   assert(choices != NULL);
+
+   vp_iterator_construct(doc, choices);
+
+   try
+    { print_core_print(doc->name(doc->handle), &vp_iterator, &vp_status);
+    }
+   catch
+    { vp_iterator.destruct();
+      throw();
+    }
+   catch_end
+
+   vp_iterator.destruct();
+ }

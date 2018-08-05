@@ -1,0 +1,277 @@
+/* testlist.c */
+/* A test harness for the list ADT
+ * (c) Paul Field
+ * v1.00 - 16/5/1995
+ * v1.10 - 15/7/1995 - list pointers now used
+ * v1.20 -  2/4/1996 - slight alterations to list interface because of exceptions
+ * v1.30 - 26/5/1996 - added tests for list_ptr functions
+ */
+
+#include "list.h"
+
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
+#include "allocate.h"
+
+
+
+static void _test_truth(const char* expression, bool value, unsigned line)
+ { if (!value)
+    { printf("line %u: %s is not true\n", line, expression);
+      exit(EXIT_FAILURE);
+    }
+ }
+
+#define test_truth(a) _test_truth(#a, a, __LINE__)
+
+
+
+
+static void check_list(const list* l, unsigned length, ...)
+ { va_list  args;
+   list_ptr lptr;
+
+   test_truth(list_length(l) == length);
+
+   va_start(args, length);
+
+   for (lptr = list_ptr_head(l); !list_ptr_past_the_end(lptr); list_ptr_inc(&lptr))
+    { int* element;
+
+      element = va_arg(args, int*);
+      test_truth(list_ptr_element(lptr) == element);
+    }
+
+   va_end(args);
+ }
+
+
+
+static void check_functionality(void)
+ { int*     one;
+   int*     two;
+   int*     three;
+   list*    l;
+   list_ptr lptr;
+
+   one   = list_alloc_element(sizeof(int));
+   *one  = 1;
+
+   two   = list_alloc_element(sizeof(int));
+   *two  = 2;
+
+   three  = list_alloc_element(sizeof(int));
+   *three = 3;
+
+   /**** Check list_is_empty ****/
+   l = list_create();
+   test_truth(list_is_empty(l));
+   list_cons(l, one);
+   test_truth(!list_is_empty(l));
+
+
+   /**** Check list_cons (already called)/list_remove_head (l = [1]) ****/
+   test_truth(list_remove_head(l) == one);
+   test_truth(list_is_empty(l));
+
+
+   /**** Check list_length (l = []) ****/
+   test_truth(list_length(l) == 0);
+   list_cons(l, one);
+   test_truth(list_length(l) == 1);
+   list_cons(l, two);
+   test_truth(list_length(l) == 2);
+
+   test_truth(list_remove_head(l) == two);
+   test_truth(list_length(l) == 1);
+   test_truth(list_remove_head(l) == one);
+   test_truth(list_length(l) == 0);
+
+
+   /**** Check list_ptr_head (l = []) ****/
+   test_truth(list_ptr_past_the_end(list_ptr_head(l)));
+
+   list_cons(l, three);
+   test_truth(list_ptr_element(list_ptr_head(l)) == three);
+
+   /**** Check list_ptr_past_the_end (l = [3]) ****/
+   /* Already tested on l = [] */
+   lptr = list_ptr_head(l);
+   test_truth(!list_ptr_past_the_end(lptr));
+
+   list_ptr_inc(&lptr);
+   test_truth(list_ptr_past_the_end(lptr));
+
+   /**** Check list_ptr_inc (l = [3]) ****/
+   list_cons(l, two);
+   list_cons(l, one);
+
+   /* l = [1,2,3] */
+   check_list(l, 3, one, two, three);  /* Uses list_ptr_inc() */
+
+   /**** Check list_ptr_add_element_after (l = [1,2,3]) ****/
+   test_truth(list_remove_head(l) == one);
+
+   /** Check add after head element **/
+   /* l = [2,3] */
+   lptr = list_ptr_head(l);
+   list_ptr_add_element_after(lptr, one);
+   test_truth(list_ptr_element(lptr) == two);
+   check_list(l, 3, two, one, three);
+
+   test_truth(list_remove_head(l) == two);
+
+   /** Check add after non-head element **/
+   /* l = [1,3] */
+   lptr = list_ptr_head(l);
+   list_ptr_inc(&lptr);
+   list_ptr_add_element_after(lptr, two);
+   test_truth(list_ptr_element(lptr) == three);
+   check_list(l, 3, one, three, two);
+
+
+   /**** Check list_ptr_add_element_before (l = [1,3,2]) ****/
+   test_truth(list_remove_head(l) == one);
+
+   /** Check add before head element **/
+   /* l = [3,2] */
+   lptr = list_ptr_head(l);
+   list_ptr_add_element_before(lptr, one);
+   check_list(l, 3, one, three, two);
+
+   test_truth(list_remove_head(l) == one);
+
+   /** Check add before non-head element **/
+   /* l = [3,2] */
+   lptr = list_ptr_head(l);
+   list_ptr_inc(&lptr);
+   list_ptr_add_element_before(lptr, one);
+   check_list(l, 3, three, one, two);
+
+   test_truth(list_remove_head(l) == three);
+
+   /** Check add before past_the_end **/
+   /* l = [1,2] */
+   lptr = list_ptr_head(l);
+   list_ptr_inc(&lptr);
+   list_ptr_inc(&lptr);
+   test_truth(list_ptr_past_the_end(lptr));
+   list_ptr_add_element_before(lptr, three);
+   check_list(l, 3, one, two, three);
+
+
+   /**** Check list_ptr_remove_element (l = [1,2,3]) ****/
+   /** Check remove head element **/
+   lptr = list_ptr_head(l);
+   list_ptr_remove_element(lptr);
+   check_list(l, 2, two, three);
+   list_cons(l, one);
+
+   /** Check remove non-head element **/
+   lptr = list_ptr_head(l);
+   list_ptr_inc(&lptr);
+   list_ptr_remove_element(lptr);
+   check_list(l, 2, one, three);
+   list_cons(l, two);
+
+
+   /**** 'check' list_free_element & list_destroy l = [2,1,3] ****/
+   test_truth(list_remove_head(l) == two);
+   test_truth(list_remove_head(l) == one);
+   list_free_element(two);
+   list_free_element(one);
+   list_destroy(l);  /* Should also free 'three' */
+ }
+
+
+
+
+static void violate_precondition(unsigned conditionno)
+ { list* l;
+   list* emptyl;
+   list* notcreatedl;
+   int*  one;
+   int*  two;
+   int*  bogus;
+   int*  notinlist;
+
+   one  = list_alloc_element(sizeof(int));
+   *one = 1;
+
+   two  = list_alloc_element(sizeof(int));
+   *two = 2;
+
+   bogus = memory_allocate(sizeof(int));
+   notinlist = list_alloc_element(sizeof(int));
+
+   l = list_create();
+   list_cons(l, two);
+   list_cons(l, one);
+
+   emptyl = list_create();
+
+   /* This list is not complete, it serves to test some of the main debugging routines */
+   /* but doesn't check that all the routines call the appropriate routines or perform */
+   /* the appropriate test_truths (it does check some)                                     */
+   switch(conditionno)
+    { case 1:
+        puts("list_free_element: freeing an element that's in a list");
+        list_free_element(one);
+      case 2:
+        puts("list_cons: element not allocated by list_alloc_element");
+        list_cons(l, bogus);
+      case 3:
+        puts("list_cons: element already in list");
+        list_cons(l, one);
+      case 4:
+        puts("list_remove_head: list is empty");
+        list_remove_head(emptyl);
+      case 5:
+        puts("Using a list that hasn't been created. Problem may not get caught - depends on machine/compiler");
+        list_is_empty(notcreatedl);
+      case 6:
+        puts("Using a list that has been destroyed. Problem may not get caught - depends on machine/compiler");
+        list_destroy(l);
+        list_is_empty(l);
+      case 7:
+        puts("Various elements and lists have not been deallocated/destroyed");
+        /* Nothing - but we have not deallocated the elements & lists
+         * so we should get a debugging message
+         */
+    }
+ }
+
+
+
+
+static const char errmess[] =
+  "Please give a single integer (0-7) as the program argument\n"
+  "0 tests list module, 1-7 test various debugging routines";
+
+
+
+
+int main(int argc, char* argv[])
+ { unsigned code;
+
+   if (argc != 2)
+    { puts(errmess);
+      return EXIT_FAILURE;
+    }
+   errno = 0;
+   code = (unsigned) strtoul(argv[1], NULL, 10);
+   if (code > 7 || errno == ERANGE)
+    { puts(errmess);
+      return EXIT_FAILURE;
+    }
+   if (code == 0)
+    { check_functionality();
+      puts("All is well - remember to check with NDEBUG defined and not defined");
+    }
+   else
+    { violate_precondition(code);
+    }
+   return EXIT_SUCCESS;
+ }

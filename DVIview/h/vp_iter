@@ -1,0 +1,25 @@
+/*** vp_iter.h ***/
+/* A print_iterator that handles a variety of print types
+ * (c) Paul Field 1996
+ * v1.00 - 3/5/1996
+ */
+
+#include "print_doc.h"
+#include "print_iterator.h"
+#include "vp_choices.h"
+
+
+void vp_iterator_construct
+ ( const print_doc*      document,
+   const vprint_choices* choices
+ );
+ /* Pre: document != NULL
+  *      choices  != NULL
+  * Constructs a print_iterator that returns the sides needed for
+  * for printing document according to choices.
+  */
+
+
+extern print_iterator vp_iterator;
+ /* Access to the iterator's functions
+  */

@@ -1,0 +1,266 @@
+/*** special.c ***/
+/* Processes special commands
+ * (c) Paul Field 1996
+ */
+
+#include "special.h"
+
+#include <ctype.h>
+#include <errno.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "allocate.h"
+#include "exception.h"
+#include "log.h"
+#include "message.h"
+
+#include "picture.h"
+
+
+
+enum
+ { description_LIMIT = 100
+ };
+
+static const char* special_diagram_command = "DVIview_diagram";
+
+
+
+
+static void special_throw(const char* dvi_filename, const char* page, const char* description_tag, const char* command)
+ { char description[description_LIMIT];
+
+   strncpy(description, message_lookup(description_tag), description_LIMIT);
+   description[description_LIMIT-1] = '\0';
+
+   log_add_sub_message(dvi_filename, page, message_lookup_and_substitute("SpecialError", description, command, NULL, NULL));
+   throw_user(exception_REPORTED);
+ }
+
+
+
+
+static unsigned read_parameters(unsigned num_params, int parameters[])
+ { unsigned i;
+
+   errno = 0;
+   for (i = 0; i < num_params; i++)
+    { char* param_string;
+      char* end_ptr;
+
+      param_string = strtok(NULL, " ");
+
+      parameters[i] = (int)strtol(param_string, &end_ptr, 10);
+      if (errno != 0 || end_ptr == param_string)
+       { return i;
+       }
+    }
+   return i;
+ }
+
+
+
+
+static char* construct_filename(const char* dvi_filename, const char* filename)
+ { char *full_name;
+
+   if (filename[0] == '@' && filename[1] == '.')
+    { char *dot_before_leafname;
+      char *leafname;
+
+      full_name = memory_allocate(strlen(filename) + strlen(dvi_filename) + 1);
+
+      strcpy(full_name, dvi_filename);
+      dot_before_leafname = strrchr(full_name, '.');
+      if (dot_before_leafname)
+       { leafname = dot_before_leafname+1;
+       }
+      else
+       { leafname = full_name;  /* This shouldn't happen */
+       }
+      strcpy(leafname, &filename[2]);
+    }
+   else
+    { full_name = memory_allocate(strlen(filename)+1);
+      strcpy(full_name, filename);
+    }
+
+   return full_name;
+ }
+
+
+
+
+static char* parse_picture_command(const char* special, const char* dvi_filename, const char* page, int crop_params[4], int scale_params[2])
+ { char*    command;
+   unsigned i;
+   char*    filename;
+   char*    filename_in_special;
+   char*    special_copy;
+
+   /* Set default parameters */
+   for (i=0; i < 4; i++)
+    { crop_params[i] = 0;
+    }
+
+   for (i=0; i < 2; i++)
+    { scale_params[i] = 100;
+    }
+
+
+   /* Parse command */
+   special_copy = memory_allocate(strlen(special)+1);
+
+   try
+    { /* Make a copy of the special command so we can parse it */
+      strcpy(special_copy, special);
+
+      /* Skip diagram command */
+      command = strtok(special_copy, " ");
+      assert(strcmp(command, special_diagram_command) == 0);
+
+      /* Read filename */
+      filename_in_special = strtok(NULL, " ");
+      if (filename_in_special == NULL)
+       { special_throw(dvi_filename, page, "NoFilename", special);
+       }
+
+      /* Parse sub-commands */
+      while(command = strtok(NULL, " "), command != NULL)
+       { if (strcmp(command, "crop") == 0)
+          { if (read_parameters(4, crop_params) != 4)
+             { special_throw(dvi_filename, page, "CropSyntax", special);
+             }
+          }
+         else
+          { if (strcmp(command, "scale") == 0)
+             { if (read_parameters(2, scale_params) != 2)
+                { special_throw(dvi_filename, page, "ScaleSyntax", special);
+                }
+             }
+            else
+             { log_add_sub_message(dvi_filename, page, message_lookup_and_substitute("UnknownSub", command, special, NULL, NULL));
+               throw_user(exception_REPORTED);
+             }
+          }
+       }
+
+      filename = construct_filename(dvi_filename, filename_in_special);
+    }
+   catch
+    { memory_free(special_copy);
+      throw();
+      filename = NULL; /* Avoid compiler warning: used before initialised */
+    }
+   catch_end
+
+   memory_free(special_copy);
+
+   return filename;
+ }
+
+
+
+
+static bool special_picture_command(const char* special)
+ { /* Skip any leading spaces */
+   while(*special == ' ')
+    { special++;
+    }
+
+   return strncmp(special, special_diagram_command, strlen(special_diagram_command)) == 0;
+
+   /* return sscanf(command_string, " DVIview_diagram %c", &dummy) == 1;
+      || sscanf(command_string, " drawfile = %c", &dummy) == 1;*/
+ }
+
+
+
+
+static picture* special_load_picture(const char* special, const char* dvi_filename, const char* page, int x, int y)
+ { int         crop_params[4];
+   int         scale_params[2];
+   char*       filename;
+   picture*    pic;
+
+
+
+   filename = parse_picture_command(special, dvi_filename, page, crop_params, scale_params);
+   try
+    { os_box clip;
+
+      clip.x0 = crop_params[0];
+      clip.x1 = crop_params[1];
+      clip.y1 = crop_params[2];
+      clip.y0 = crop_params[3];
+
+      pic = picture_construct(filename, scale_params[0], scale_params[1], &clip, x, y);
+    }
+   catch
+    { memory_free(filename);
+      throw();
+      pic = NULL; /* Stops compiler warning about pic being used before being set */
+    }
+   catch_end
+
+   memory_free(filename);
+
+   return pic;
+ }
+
+
+
+
+static void special_fonts_from_picture(const char* special, const char* dvi_filename, const char* page, font_set* fonts)
+ { int         crop_params[4];
+   int         scale_params[2];
+   char*       filename;
+
+   filename = parse_picture_command(special, dvi_filename, page, crop_params, scale_params);
+   try
+    { picture_file_add_fonts_to_set(filename, fonts);
+    }
+   catch
+    { memory_free(filename);
+      throw();
+    }
+   catch_end
+
+   memory_free(filename);
+ }
+
+
+
+
+void special_process(const char* special, const char* dvi_filename, const char* page, int x, int y, list* pic_list)
+ { if (special_picture_command(special))
+    { picture* pic;
+      os_box   bounds;
+
+      pic = special_load_picture(special, dvi_filename, page, x, y);
+      picture_clipped_bounds(pic, 0, 0, 100, &bounds);
+      if (bounds.x1 >= bounds.x0 && bounds.y1 >= bounds.y0)
+       { list_cons(pic_list, pic);
+       }
+      else
+       { picture_destruct(pic);
+         special_throw(dvi_filename, page, "OverCrop", special);
+       }
+    }
+   else
+    { log_add_sub_message(dvi_filename, page, message_lookup_and_substitute("UnknownSpecial", special, NULL, NULL, NULL));
+    }
+ }
+
+
+
+
+void special_add_fonts_to_set(const char* special, const char* dvi_filename, const char* page, font_set* fonts)
+ { if (special_picture_command(special))
+    { special_fonts_from_picture(special, dvi_filename, page, fonts);
+    }
+   else
+    { log_add_sub_message(dvi_filename, page, message_lookup_and_substitute("UnknownSpecial", special, NULL, NULL, NULL));
+    }
+ }

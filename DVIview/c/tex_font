@@ -1,0 +1,212 @@
+/** tex_font.c **/
+/* Data structure for document fonts
+ * (c) Paul Field 1995
+ */
+
+#include "tex_font.h"
+
+#include <stdio.h>
+#include <assert.h>
+#include <string.h>
+
+#include "allocate.h"
+#include "ci_string.h"
+#include "error.h"
+#include "exception.h"
+#include "list.h"
+#include "log.h"
+#include "message.h"
+
+#include "file.h"
+#include "font_file.h"
+#include "substitute.h"
+#include "tfm.h"
+#include "virtual_font.h"
+
+
+
+typedef enum font_type_enum
+ { font_type_real,
+   font_type_virtual
+ }font_type;
+
+
+
+struct tex_font_str
+ { int        font_no;
+   font_type  type;
+
+   union
+    { real_font*    real;
+      virtual_font* virt;
+    }font;
+ };
+
+
+
+tex_font* tex_font_construct(const parameters_font_def* font_def, double dvi_to_1e7_metres, const char* error_source)
+ { tex_font* tfont;
+
+   assert(font_def != NULL);
+   assert(error_source != NULL);
+
+
+   if (font_def->area_name != NULL)
+    { /* Warn that we don't understand font areas */
+      log_add_message(error_source, message_lookup_and_substitute("FontArea", font_def->area_name, NULL, NULL, NULL));
+    }
+
+
+   tfont = list_alloc_element(sizeof(struct tex_font_str));
+   tfont->type      = font_type_real;
+   tfont->font.real = NULL;
+
+   try
+    { tfont->font_no = font_def->font_no;
+
+      if (file_exists(font_file_name(font_def->font_name, "vf")))
+       { tfont->type      = font_type_virtual;
+         tfont->font.virt = virtual_font_construct(font_def->font_name, font_def->scale, dvi_to_1e7_metres);
+       }
+      else
+       { assert(tfont->type == font_type_real);
+
+         tfont->font.real = real_font_construct
+          ( font_def->font_name,
+            font_def->scale,
+            dvi_to_1e7_metres,
+            font_def->checksum,
+            error_source
+          );
+       }
+    }
+   catch
+    { tex_font_destruct(tfont);
+      throw();
+    }
+   catch_end
+
+   return tfont;
+ }
+
+
+
+
+void tex_font_destruct(tex_font* tfont)
+ { if (tfont != NULL)
+    { if (tfont->type == font_type_real)
+       { real_font_destruct(tfont->font.real);
+       }
+      else
+       { assert(tfont->type == font_type_virtual);
+
+         virtual_font_destruct(tfont->font.virt);
+       }
+
+      list_free_element(tfont);
+    }
+ }
+
+
+
+
+bool tex_font_char_is_valid(const tex_font* tfont, unsigned char c)
+ { assert(tfont);
+
+   if (tfont->type == font_type_real)
+    { return real_font_char_is_valid(tfont->font.real, c);
+    }
+   else
+    { assert(tfont->type == font_type_virtual);
+
+      return virtual_font_char_is_valid(tfont->font.virt, c);
+    }
+ }
+
+
+
+
+int tex_font_char_width(const tex_font* tfont, unsigned char c)
+ { assert(tfont);
+   assert(tex_font_char_is_valid(tfont, c));
+
+   if (tfont->type == font_type_real)
+    { return real_font_char_width(tfont->font.real, c);
+    }
+   else
+    { assert(tfont->type == font_type_virtual);
+
+      return virtual_font_char_width(tfont->font.virt, c);
+    }
+ }
+
+
+
+
+int tex_font_number(const tex_font* tfont)
+ { assert(tfont);
+
+   return tfont->font_no;
+ }
+
+
+
+
+void tex_font_render(const tex_font* tfont, int x, int y, unsigned char c, const renderer* r)
+ { assert(tfont != NULL);
+   assert(r != NULL);
+   assert(tex_font_char_is_valid(tfont, c));
+
+   if (tfont->type == font_type_real)
+    { r->render_char(tfont->font.real, x, y, c);
+    }
+   else
+    { assert(tfont->type == font_type_virtual);
+
+      virtual_font_render(tfont->font.virt, c, x, y);
+    }
+ }
+
+
+
+
+void tex_font_add_render_fonts_to_set(const tex_font* tfont, font_set* fonts)
+ { assert(tfont != NULL);
+   assert(fonts != NULL);
+
+   if (tfont->type == font_type_real)
+    { font_info info;
+
+      strcpy(info.name, real_font_render_name(tfont->font.real));
+      set_insert(fonts, &info);
+    }
+   else
+    { assert(tfont->type == font_type_virtual);
+
+      virtual_font_add_render_fonts_to_set(tfont->font.virt, fonts);
+    }
+ }
+
+
+
+
+#ifndef NDEBUG
+void tex_font_debug_output(const tex_font* tfont)
+ { fprintf
+    ( stderr,
+      "  Font number = %d\n"
+      "  Font type = %s\n",
+      tfont->font_no,
+      tfont->type == font_type_real ? "real" : "virtual"
+    );
+
+   if (tfont->type == font_type_real)
+    { real_font_debug_output(tfont->font.real);
+    }
+   else
+    { assert(tfont->type == font_type_virtual);
+
+      virtual_font_debug_output(tfont->font.virt);
+    }
+ }
+#endif

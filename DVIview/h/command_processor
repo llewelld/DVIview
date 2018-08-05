@@ -1,0 +1,40 @@
+/**** command_processor.h ****/
+/* Processes dvi commands
+ * (c) Paul Field
+ */
+
+#include "byte_stream.h"
+#include "font_table.h"
+
+
+enum
+ { exception_UNKNOWN_FONT,
+   exception_UNDEFINED_COMMAND
+ };
+
+
+void command_processor_page(const font_table* fonts, byte_stream* stream, const renderer* r, double dvi_to_draw);
+ /* Pre: command processor is not active
+  *      fonts != NULL
+  *      stream != NULL
+  *      r != NULL
+  *      dviops_read_command(stream, &c), c.code == command_bop
+  * Exceptions: various (as thrown by stream or renderer), the exceptions listed above
+  *
+  * Processes stream as a sequence of dvi commands terminated by the first eop command.
+  * Uses fonts and renderer to render the objects described in the commands.
+  *
+  * During this call the command process is 'active'.
+  */
+
+
+void command_processor_macro(const font_table* fonts, byte_stream* stream, double scale);
+ /* Pre: command processor is active
+  *      fonts != NULL
+  *      stream != NULL
+  * Exceptions: various (as thrown by stream or renderer), the exceptions listed above
+  *
+  * Processes stream as a sequence of dvi commands.
+  * Uses fonts and the current command processor renderer to render the objects
+  * described in the commands.
+  */

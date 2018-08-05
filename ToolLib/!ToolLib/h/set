@@ -1,0 +1,163 @@
+/*** set.h ***/
+/* Abstract data type :
+ *   Simple set
+ * (c) Paul Field
+ * v1.00 - 15/7/1995
+ * v1.10 -  2/4/1996 - Changed to use memory_allocate (and throw exceptions)
+ * v1.20 - 26/5/1996 - Add set_ptr and associated routines. Removed set_nth_element()
+ * v1.21 - 14/6/1996 - set_insert() now returns a bool to indicate whether the value was inserted
+ */
+
+#ifndef _set_h
+#define _set_h
+
+#include "bool.h"
+
+#include <stddef.h>
+
+/* This module implements a simple set
+ * Unlike lists and queues, sets contain copies of your objects.
+ *
+ * This module performs extensive checks on function arguments if
+ * it is compiled without NDEBUG defined.
+ * The module can also help to detect memory leaks. When your program
+ * exits the set module will output (on stderr) the number of sets not
+ * destroyed.
+ * You MUST compile your production code with NDEBUG defined. There is
+ * a large time overhead for these checks.
+ */
+
+
+/* Opaque types */
+typedef struct set_str      set;
+typedef struct set_element* set_ptr;
+
+
+typedef int (*compare_fn)(const void* o1, const void* o2);
+ /* Returns either:
+  *   -ve if o1 < o2
+  *    0  if o1 = o2
+  *   +ve if o1 > o2
+  * Or:
+  *    0  if o1 = o2
+  *   +ve if o1 != o2
+  */
+
+typedef size_t (*sizeof_fn)(const void* o);
+ /* Returns the size of object o
+  */
+
+
+
+set* set_create(compare_fn, sizeof_fn, size_t size);
+ /* Pre: sizeof_fn == NULL <-> size != 0
+  *      compare_fn == NULL -> size_of == NULL
+  * Exceptions: exception_NO_MEMORY
+  *
+  * Creates and returns an empty set.
+  * The functions provided allow copies of variable-sized objects (e.g. strings) to be made and compared.
+  * If compare_fn is NULL then objects will be compared byte-by-byte.
+  * If objects are variable-sized (e.g. strings) then sizeof_fn should be supplied
+  * otherwise size should be supplied.
+  */
+
+
+void set_destroy(set* s);
+ /* Exceptions: none
+  * Complexity: linear
+  *
+  * Frees the memory taken up by the set
+  * (s may be NULL)
+  */
+
+
+void* set_insert(set* s, const void* o);
+ /* Pre:  s != NULL
+  * Post: s' = s union {o}
+  * Exceptions: exception_NO_MEMORY
+  * Complexity: linear
+  *
+  * Creates a copy of o and inserts it into s (does nothing if an object
+  * equal to o is already in s)
+  *
+  * Returns a pointer to the copy of o inserted into the set or NULL
+  * if nothing was inserted.
+  *
+  * N.B. This call invalidates all set_ptrs pointing to elements of s.
+  */
+
+
+void set_remove(set* s, const void* o);
+ /* Pre:  s != NULL
+  * Post: s' = s - {o}
+  * Exceptions: none
+  * Complexity: linear
+  *
+  * Removes any object that is equal to o from s
+  *
+  * N.B. This call invalidates all set_ptrs pointing to elements of s.
+  */
+
+
+void* set_contains(const set* s, const void* o);
+ /* Pre: s != NULL
+  * Exceptions: none
+  * Complexity: linear
+  *
+  * Returns the object in s which is equal to o or NULL if there is no such object.
+  *
+  * The return value is not const but the object may only be changed in ways that
+  * do not affect o's position in the ordering of all objects under the set's compare_fn
+  * ordering function.
+  */
+
+
+unsigned set_elements(const set* s);
+ /* Exceptions: none
+  * Complexity: linear
+  *
+   Returns the number of elements in the set
+  */
+
+
+set_ptr set_ptr_first(const set* s);
+ /* Exceptions: none
+  * Complexity: constant
+  *
+  * Returns a 'pointer' to the 'first' element in the set.
+  * If the set is empty then returns the 'past the end' pointer.
+  *
+  * Elements will be returned from the set in ascending order
+  * (as determined by the set's compare() function, passed in
+  * when it was created).
+  */
+
+
+bool set_ptr_past_the_end(set_ptr sptr);
+ /* Exceptions: none
+  * Complexity: constant
+  *
+  * Returns TRUE if the sptr is past the end of the set
+  */
+
+
+void set_ptr_inc(set_ptr* sptr);
+ /* Pre: sptr != NULL
+  *      !set_ptr_past_the_end(*sptr)
+  * Exceptions: none
+  * Complexity: constant
+  *
+  * Increments the set pointer so it points to the 'next' element in the set (or
+  * past the end).
+  */
+
+
+void* set_ptr_element(set_ptr sptr);
+ /* Pre: !set_ptr_past_the_end(sptr)
+  * Exceptions: none
+  * Complexity: constant
+  *
+  * Returns the element pointed to by sptr
+  */
+
+#endif

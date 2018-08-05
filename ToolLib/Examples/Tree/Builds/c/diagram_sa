@@ -1,0 +1,163 @@
+/*** diagram_save.c ***/
+/* Save the line_store as a Draw diagram via save_buffer
+ * (c) Paul Field
+ */
+
+#include "diagram_save.h"
+
+#include <assert.h>
+#include "drawfile.h"
+#include "macros.h"
+
+#include "box.h"
+#include "line_storer.h"
+#include "save_buffer.h"
+
+
+#define OSToDraw(os) ((os) * draw_OS_UNIT)
+
+
+/* A standard Draw file header. Requires the bounding box to be filled in */
+static drawfile_diagram default_header =
+ { { 'D','r','a','w' },
+   201,
+   0,
+   { 'T','r','e','e',' ',' ',' ',' ',' ',' ',' ',' ' },
+   {-1,-1,0,0}
+ };
+
+
+/* A 'template' path object for a path containing a single line */
+/* The non-const items need to be filled in for a particular line */
+static struct
+ { const drawfile_type       type;
+   const unsigned            size;
+         os_box              bbox;
+   const os_colour           fill;
+         os_colour           outline;
+   const unsigned            width;
+   const drawfile_path_style style;
+
+   const unsigned            move_tag;
+         os_coord            start;
+   const unsigned            line_tag;
+         os_coord            end;
+   const unsigned            end_tag;
+ }
+line_template =
+ { drawfile_TYPE_PATH,
+   sizeof(line_template),
+   { 0,0,0,0 },
+   -1,
+   -1,
+   64,
+   {0,0,0,0},
+
+   draw_MOVE_TO,
+   {0,0},
+   draw_LINE_TO,
+   {0,0},
+   draw_END_PATH
+ };
+
+
+static void diagram_get_line_from_store(unsigned index, colour *c, int *x0, int *y0, int *x1, int *y1)
+ /* As line_storer_get_line but returns the coordinates in Draw units (assuming the line_store uses OS units) */
+ { line_storer_get_line(index, c, x0, y0, x1, y1);
+   *x0 = OSToDraw(*x0);
+   *x1 = OSToDraw(*x1);
+   *y0 = OSToDraw(*y0);
+   *y1 = OSToDraw(*y1);
+ }
+
+
+
+static void diagram_save_line_object(colour c, int x0, int y0, int x1, int y1)
+ { os_colour converted_colour;
+
+   converted_colour = (os_colour)(c << 8);  /* An os_colour is of the form BGR0 */
+
+   line_template.bbox.x0 = MIN(x0,x1);
+   line_template.bbox.x1 = MAX(x0,x1);
+   line_template.bbox.y0 = MIN(y0,y1);
+   line_template.bbox.y1 = MAX(y0,y1);
+
+   line_template.outline = converted_colour;
+
+   line_template.start.x = x0;
+   line_template.start.y = y0;
+
+   line_template.end.x   = x1;
+   line_template.end.y   = y1;
+   save_buffer_send(&line_template, sizeof(line_template));
+ }
+
+
+
+
+static void diagram_line_bounds(unsigned index, os_box *bounds)
+ { colour   c;
+   int      x0;
+   int      y0;
+   int      x1;
+   int      y1;
+
+   assert(bounds != NULL);
+
+   diagram_get_line_from_store(index, &c, &x0, &y0, &x1, &y1);
+   bounds->x0 = MIN(x0,x1);
+   bounds->y0 = MIN(y0,y1);
+   bounds->x1 = MAX(x0,x1);
+   bounds->y1 = MAX(y0,y1);
+ }
+
+
+
+
+static void diagram_calculate_bounds(os_box *bounds)
+ { unsigned num_lines;
+   unsigned line_idx;
+
+   assert(bounds != NULL);
+
+   num_lines = line_storer_num_lines();
+
+   if (num_lines >= 1)
+    { diagram_line_bounds(0, bounds);
+
+      for (line_idx = 1; line_idx < num_lines; line_idx++)
+       { os_box line_bounds;
+
+         diagram_line_bounds(line_idx, &line_bounds);
+         box_bounds(bounds, &line_bounds, bounds);
+       }
+    }
+   else
+    { bounds->x0 = 0;
+      bounds->y0 = 0;
+      bounds->x1 = 0;
+      bounds->y1 = 0;
+    }
+ }
+
+
+
+
+void diagram_save(void)
+ { unsigned line_idx;
+   colour   c;
+   int      x0;
+   int      y0;
+   int      x1;
+   int      y1;
+
+   /* Output drawfile header */
+   diagram_calculate_bounds(&default_header.bbox);
+   save_buffer_send(&default_header, offsetof(drawfile_diagram, objects));
+
+   /* Save lines */
+   for (line_idx = 0; line_idx < line_storer_num_lines(); line_idx++)
+    { diagram_get_line_from_store(line_idx, &c, &x0, &y0, &x1, &y1);
+      diagram_save_line_object(c, x0, y0, x1, y1);
+    }
+ }

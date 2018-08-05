@@ -1,0 +1,21 @@
+/*** vp_font.h ***/
+
+#include "print_declarer.h"
+
+
+void vp_font_declarer_construct(void);
+ /* Construct the font_declarer
+  */
+
+void vp_font_declarer_finished(void);
+ /* Inform the font_declarer that no more fonts will be added to it
+  */
+
+void vp_font_declarer_destruct(void);
+ /* Free any resources associated with the font_declarer
+  * (OK to call this even if font_declarer isn't constructed)
+  */
+
+extern print_font_declarer vp_font_declarer;
+ /* Allow access to font declarer functions
+  */

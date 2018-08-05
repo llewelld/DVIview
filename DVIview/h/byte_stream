@@ -1,0 +1,103 @@
+/*** byte_stream.h ***/
+/* A read-only stream of bytes
+ * (c) Paul Field 1996
+ */
+
+#ifndef _byte_stream_h
+#define _byte_stream_h
+
+#include <stddef.h>
+
+
+typedef struct byte_stream byte_stream;
+
+
+byte_stream* byte_stream_construct_from_file(const char* name);
+ /* Pre: name != NULL
+  * Post: get_position(byte_stream) = 0
+  * Exceptions: exception_NO_MEMORY
+  *
+  * Opens and returns the file identified by name as a byte stream
+  */
+
+
+byte_stream* byte_stream_construct_from_memory(void* bytes, size_t num_bytes, const char* name);
+ /* Pre: bytes != NULL
+  *      name != NULL
+  * Post: get_position(byte_stream) == 0
+  *       name(byte_stream)         == name
+  *       extent(byte_stream)       == num_bytes
+  * Exceptions: exception_NO_MEMORY
+  *
+  * Creates a byte stream from 'bytes' with an extent of num_bytes.
+  * (Note the stream's time stamp is undefined).
+  *
+  * bytes and name must exist for the lifetime of the byte stream returned -
+  * they are not 'owned' by the byte stream and so are not destroyed when
+  * the byte stream is destroyed.
+  */
+
+
+void byte_stream_destruct(byte_stream* stream);
+ /* Closes stream and frees any resources associated with it.
+  * (stream may be NULL)
+  */
+
+
+const char* byte_stream_name(const byte_stream* stream);
+ /* Pre: stream != NULL
+  *
+  * Returns the name of the stream.
+  * The value returned is valid until the next call to this function
+  * (or to file_name if this is a file stream)
+  */
+
+
+void byte_stream_set_position(byte_stream* stream, unsigned position);
+ /* Pre:  stream != NULL
+  *       position < extent(stream)
+  * Post: get_position(stream) == position
+  * Exceptions: OS
+  *
+  * Sets the value of the stream pointer.
+  */
+
+
+unsigned byte_stream_get_position(const byte_stream* stream);
+ /* Pre:  stream != NULL
+  * Post: 0 <= position_returned <= extent(stream)
+  *
+  * Returns stream's pointer position
+  */
+
+
+unsigned byte_stream_extent(const byte_stream* stream);
+ /* Pre: stream != NULL
+  * Returns stream's extent
+  */
+
+
+void byte_stream_read(byte_stream* stream, void* destination, size_t num_bytes_to_read);
+ /* Pre:  stream != NULL
+  *       get_position(stream) + num_bytes_to_read <= extent(stream)
+  *       There is num_bytes_to_read free space at destination
+  * Post: for all i, 0 <= i < num_bytes_to_read, destination[i] == stream[get_position(stream)+i]
+  *       get_position(stream) == old_get_position(stream) + num_bytes_to_read
+  * Reads num_bytes_to_read bytes from stream, starting at the current byte_stream position, to destination
+  */
+
+
+void byte_stream_read_at(byte_stream* stream, void* destination, size_t num_bytes_to_read, unsigned position);
+ /* Semantically equivalent to:
+  *    byte_stream_set_position(stream, position);
+  *    byte_stream_read(stream, destination, num_bytes_to_read)
+  */
+
+
+void byte_stream_time_stamp(const byte_stream* stream, unsigned char UTC[5]);
+ /* Pre:  stream != NULL
+  * Sets UTC to be the byte_stream's time stamp
+  */
+
+
+#endif

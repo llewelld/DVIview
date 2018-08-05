@@ -1,0 +1,155 @@
+/*** shifting.h ***/
+/* A shifting heap memory management system that throws exceptions
+ * (uses Acorn's flex routines)
+ * (c) Paul Field 1995
+ * v1.00 - 15/9/1995
+ * v1.01 - 11/4/1995 - added shifting_set_malloc_extension()
+ */
+
+#ifndef _shifting_h
+#define _shifting_h
+
+#include <stddef.h>
+
+#ifndef messagetrans_H
+#include "messagetrans.h"
+#endif
+
+/* allocate.h is only included for the 'exception_NO_MEMORY' constant */
+#include "allocate.h"
+
+
+typedef void** shifting_ptr;
+
+
+void shifting_allocate(shifting_ptr anchor, size_t size);
+ /* Pre: anchor != NULL
+  * Exceptions: exception_NO_MEMORY
+  *
+  * Changes '*anchor' to point to 'size' bytes of newly-allocated store.
+  *
+  * Note that the value of '*anchor' can be changed by calls to other shifting_xxx()
+  * functions (even if a different anchor is passed) and if shifting_allow_malloc_extension()
+  * is called, the value can change whenever malloc() (or memory_allocate()) is called
+  * or when a function call is made (because the stack may be extended).
+  */
+
+
+void shifting_free(shifting_ptr anchor);
+ /* Pre:  *anchor == NULL || anchor was allocated using shifting_allocate()
+  * Post: *anchor == NULL
+  * Exceptions: none
+  *
+  * Frees the previously allocated store
+  */
+
+
+size_t shifting_size(shifting_ptr anchor);
+ /* Pre: anchor was allocated using shifting_allocate()
+  * Exceptions: none
+  *
+  * Returns the number of bytes allocated to '*anchor'
+  */
+
+
+void shifting_extend_by(shifting_ptr anchor, size_t num_bytes_to_add);
+ /* Pre: anchor was allocated using shifting_allocate()
+  * Exceptions: exception_NO_MEMORY
+  *
+  * 'num_bytes_to_add' bytes of newly-allocated store are added to the end
+  * of the memory allocated to '*anchor'.
+  */
+
+
+void shifting_shrink_by(shifting_ptr anchor, size_t num_bytes_to_remove);
+ /* Pre: anchor was allocated using shifting_allocate()
+  *      num_bytes_to_remove <= shifting_size(anchor)
+  * Exceptions: none
+  *
+  * Removes 'num_bytes_to_remove' bytes from the end of the memory
+  * allocated to '*anchor'
+  */
+
+
+void shifting_alter_size(shifting_ptr anchor, size_t new_size);
+ /* Pre: anchor was allocated using shifting_allocate()
+  * Exceptions: exception_NO_MEMORY
+  *
+  * The amount of memory allocated to '*anchor' is alter to 'new_size' bytes
+  * by adding or removing bytes from the end of '*anchor's current memory.
+  */
+
+
+void shifting_insert_bytes(shifting_ptr anchor, unsigned at, size_t num_bytes_to_add);
+ /* Pre: anchor was allocated using shifting_allocate()
+  * Exceptions: exception_NO_MEMORY
+  *
+  * 'num_bytes_to_add' bytes of newly-allocated memory are inserted into the
+  * memory allocated to '*anchor' at offset 'at'. So:
+  * bytes from 0    to 'at-1' will be unchanged,
+  * bytes from 'at' to 'at + num_bytes_to_add-1' will be new and undefined
+  * bytes from 'at+num_bytes_to_add' onwards will be equal to the bytes that used to be at 'at' onwards
+  */
+
+
+void shifting_remove_bytes(shifting_ptr anchor, unsigned at, size_t num_bytes_to_remove);
+ /* Pre: anchor was allocated using shifting_allocate()
+  *      num_bytes_to_remove <= shifting_size(anchor) - at
+  * Exceptions: none
+  *
+  * 'num_bytes_to_remove' bytes of newly-allocated memory are removed from offset 'at' in the
+  * memory allocated to '*anchor'. So:
+  * bytes from 0 to 'at-1' will be unchanged
+  * bytes from 'at' onwards will be equal to those that used to be at 'at+num_bytes_to_remove' onwards
+  */
+
+
+void shifting_allow_malloc_extension(void);
+ /* Exceptions: none
+  *
+  * Call this function to allow the malloc heap to grab memory from the Wimp when it needs it
+  * (for example, during calls to malloc(), calloc(), realloc(), memory_allocate() and
+  * memory_reallocate() or also for a function call).
+  * This will call any shifting blocks to move.
+  */
+
+
+void shifting_stop_malloc_extension(void);
+ /* Exceptions: none
+  *
+  * Call this function to stop the malloc heap from extending itself.
+  * This will mean that only shifting_xxx() functions can cause
+  * shifting blocks to move.
+  * This is the default state of the shifting system.
+  */
+
+
+typedef enum shifting_extension_enum
+ { shifting_malloc_extension_allowed,
+   shifting_malloc_extension_stopped
+ }shifting_extension;
+
+shifting_extension shifting_set_malloc_extension(shifting_extension);
+ /* Exceptions: none
+  *
+  * Sets whether malloc_extension is allowed and returns whether it was allowed
+  * when this call was made
+  */
+
+
+void shifting_initialise(const char* program_name, const messagetrans_control_block* error_messages);
+ /* Pre: program_name != NULL
+  * Exceptions: none
+  *
+  * Initialises the shifting heap manger and so should be called before any other routine in this
+  * sub-system.
+  * 'program_name' must point to a string whose lifetime is the entire program.
+  * 'error_messages' is used to lookup error messages. If it is NULL then default English messages are used.
+  */
+
+
+void shifting_initialise_for_toolbox(void);
+ /* Can be used as an alternative to shifting_initialise() assuming that toolbox_initialise() has been called.
+  */
+
+#endif

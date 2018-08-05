@@ -1,0 +1,18 @@
+# Message file for !GFXView
+
+_TaskName:Graphics View
+
+SigQuery:The error "%0" has occurred. Should Graphics View try to continue?
+Sig1:Abort
+Sig2:Arithmetic exception
+Sig3:Illegal instruction
+Sig4:Attention request
+Sig5:Address exception
+Sig6:Termination request
+Sig7:Stack overflow
+Sig8
+Sig9:User exception
+Siga:OS error
+Sig?:Unknown
+
+Err10000:Not enough memory

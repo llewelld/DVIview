@@ -1,0 +1,4 @@
+IF "<ADTlib$Path>" = "" THEN Set C$Path <C$Path>,ADTLib:
+
+Set ADTlib$Dir <Obey$Dir>
+Set ADTlib$Path <ADTlib$Dir>.

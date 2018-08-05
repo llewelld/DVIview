@@ -1,0 +1,95 @@
+/*** save_buffer.h ***/
+/* Provide an easy-to-use way of implementing type 3 saving
+ * (c) Paul Field
+ * v1.10 - 10/9/1995
+ *   Exception throwing version
+ * v1.11 - 15/12/1995
+ *   Added save_buffer_send_char() and save_buffer_send_string()
+ * v1.12 - 12/4/1996
+ *   It's now safe to pass shifting-allocated blocks to the send routines
+ * v1.13 - 23/4/1996
+ *   It's now only safe to pass shifting-allocated blocks to the send routines
+ *   if malloc extension is disabled. If malloc extension is enabled then use
+ *   the shifting_send facility instead. (This change avoids having to link in
+ *   all the shifting & flex code even when shifting blocks aren't used)
+ */
+
+/* A save buffer buffers data output, directing it to
+ * either a file or to another application via the Wimp RAM transfer
+ * protocol (as implemented in the Toolbox)
+ */
+
+#include <stddef.h>
+
+#ifndef toolbox_H
+#include "toolbox.h"
+#endif
+
+
+void save_buffer_create_for_file(const char* filename, bits file_type);
+ /* Pre: filename != NULL
+  * Exceptions: os (from opening 'filename')
+  *
+  * Creates the save buffer, directing its output to filename
+  * Call in response to a SaveAs_SaveToFile event
+  * (This call was designed to be called independant of a saveas object because
+  *  !DVIview needs this behaviour when saving multiple pages into a directory)
+  */
+
+
+void save_buffer_create_for_memory(toolbox_o saveas, size_t buffer_size);
+ /* Pre: buffer_size > 0
+  * Exceptions: exception_NO_MEMORY
+  *
+  * Creates the save buffer, directing its output to another
+  * application via the Wimp RAM transfer protocol.
+  * Call in response to a SaveAs_FillBuffer event with address = 0
+  * (other FillBuffer events will be handled automatically)
+  */
+
+
+void save_buffer_send(const void* bytes, size_t size);
+ /* Pre: bytes != NULL
+  * Exceptions: os, exception_NO_MEMORY
+  *
+  * Stores 'size' bytes from bytes in to the save_buffer
+  * (sending them to their destination when the buffer is full)
+  *
+  * Only pass data from a shifting-allocated block to this function
+  * if malloc extension is disabled or you can use shifting_send() instead.
+  */
+
+
+void save_buffer_destroy(bool save_successful);
+ /* Exceptions: none
+  *
+  * Destroys the save buffer
+  * save_successful should be TRUE if the save was successfully completed
+  */
+
+
+
+
+/* Some functions for sending common data types via the save_buffer
+ */
+
+void save_buffer_send_char(char c);
+ /* Exceptions: os, exception_NO_MEMORY
+  *
+  * Sends a character to the save buffer
+  */
+
+
+void save_buffer_send_unsigned(unsigned u);
+ /* Exceptions: os, exception_NO_MEMORY
+  *
+  * Sends an unsigned integer to the save buffer
+  */
+
+
+void save_buffer_send_string(const char* string);
+ /* Pre: string != NULL
+  * Exceptions: os, exception_NO_MEMORY
+  *
+  * Sends a string (but not the terminating null character) to the save buffer
+  */

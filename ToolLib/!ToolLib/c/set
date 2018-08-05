@@ -1,0 +1,336 @@
+/*** set.c ***/
+/* Abstract data type :
+ *   Simple set
+ * (c) Paul Field
+ */
+
+#include "set.h"
+
+#include <assert.h>
+#include <string.h>
+#include <stdlib.h>
+#include "allocate.h"
+#include "list.h"
+#include "exception.h"
+
+
+/* A set is implemented by a sorted list, elements are stored in ascending order */
+
+struct set_str
+ { list*       set_list;
+   compare_fn  compare;
+   sizeof_fn   size_of;
+   size_t      size;
+#ifndef NDEBUG
+   const void* set_active;    /* Used by debugging code to flag that this set has not been destroyed */
+#endif
+ };
+
+#define object_size(s,o) ((s)->size_of ? (s)->size_of(o) : (s)->size)
+#define object_compare(s,o1,o2)  ((s)->compare ? (s)->compare(o1, o2) : memcmp(o1, o2, (s)->size))
+
+
+
+#ifdef NDEBUG
+/* No debugging */
+#define sdbg_stats()
+#define sdbg_note_set_created(s)
+#define sdbg_note_set_destroyed(s)
+#define sdbg_error(f,e)
+#define sdbg_check_set_is_valid(s,f)
+
+#else
+#include <stdio.h>
+  static int      set_active_magic;        /* A magic value to indicate a set is active (i.e. not destroyed) */
+  static int      set_not_active_magic;    /* A magic value to indicate a set is not active (i.e. has been destroyed) */
+  static unsigned sets = 0;                /* Number of set_create() - number of set_destroy() */
+  static bool     exit_registered = FALSE; /* TRUE once sdbg_stats has been registered with atexit() */
+
+
+
+
+  static void sdbg_stats(void)
+   /* If there are set still allocated, this outputs the number of each
+    */
+   { if (sets != 0)
+      { fprintf(stderr, "Number of sets not destroyed = %u (These will appear as lists not destroyed too)\n", sets);
+      }
+   }
+
+
+
+
+  static void sdbg_note_set_created(set* s)
+   /* Notes that a list has been created. (Also installs qbg_stats
+    * to be called when the program exits, if it hasn't been installed already)
+    */
+   { if (!exit_registered)
+      { exit_registered = TRUE;
+        atexit(sdbg_stats);
+      }
+     sets++;
+     s->set_active = &set_active_magic;
+   }
+
+
+
+
+  static void sdbg_note_set_destroyed(set* s)
+   /* Notes that a set is about to be destroyed
+    */
+   { assert(sets > 0);
+     sets--;
+     s->set_active = &set_not_active_magic;
+   }
+
+
+
+
+  static void sdbg_error(const char* function, const char* error)
+   /* Reports an error that occured in function and then aborts
+    */
+   { assert(function != NULL);
+     assert(error != NULL);
+
+     fputs(function, stderr);
+     fputs(": ",stderr);
+     fputs(error, stderr);
+     fputc('\n', stderr);
+     abort();
+   }
+
+
+
+
+  static void sdbg_check_set_is_valid(const set* s, const char* function)
+   /* Checks that s is a valid set.
+    * If there is some problem with it and error is generated and abort() is called
+    */
+   { if (s == NULL)
+      { sdbg_error(function, "NULL has been passed as set parameter");
+      }
+     if (s->set_active == &set_not_active_magic)
+      { sdbg_error(function, "The set has been destroyed - you can no longer use it");
+      }
+     if (s->set_active != &set_active_magic)
+      { sdbg_error(function, "The set parameter has not been created or is corrupt (or may have been destroyed)");
+      }
+
+     assert((s->size_of == NULL && s->size != 0) || (s->size_of != NULL && s->size == 0));
+     assert(s->compare != NULL || (s->compare == NULL && s->size_of == NULL));
+
+     if (list_length(s->set_list) > 1)
+      { void*    previous_element;
+        list_ptr ptr;
+
+        ptr = list_ptr_head(s->set_list);
+        previous_element = list_ptr_element(ptr);
+        list_ptr_inc(&ptr);
+
+        while(!list_ptr_past_the_end(ptr))
+         { void* element;
+           int   compare_result;
+
+           element = list_ptr_element(ptr);
+           compare_result = object_compare(s, previous_element, element);
+
+           if (compare_result == 0)
+            { sdbg_error(function, "Identical elements in the set");
+            }
+           if (compare_result > 0)
+            { sdbg_error(function, "Internal ordering of set elements is not correct");
+            }
+
+           previous_element = element;
+           list_ptr_inc(&ptr);
+         }
+      }
+   }
+
+#endif
+
+
+
+
+
+set* set_create(compare_fn compare, sizeof_fn size_of, size_t size)
+ { set* s;
+
+   assert((size_of == NULL && size != 0) || (size_of != NULL && size == 0));
+   assert(compare != NULL || (compare == NULL && size_of == NULL));
+
+   s = memory_allocate(sizeof(struct set_str));
+
+   try
+    { s->set_list = list_create();
+      s->compare = compare;
+      s->size_of = size_of;
+      s->size    = size;
+      sdbg_note_set_created(s);
+    }
+   catch
+    { memory_free(s);
+      throw();
+    }
+   catch_end
+
+   return s;
+ }
+
+
+
+
+void set_destroy(set* s)
+ { if (s != NULL)
+    { sdbg_check_set_is_valid(s,"set_destroy");
+      sdbg_note_set_destroyed(s);
+
+      list_destroy(s->set_list);
+      memory_free(s);
+    }
+ }
+
+
+
+
+static void* add_object(set* s, list_ptr ptr, const void* o)
+ { void*  new_o;
+   size_t o_size;
+
+   o_size = object_size(s,o);
+   new_o = list_alloc_element(o_size);
+   memcpy(new_o, o, o_size);
+   list_ptr_add_element_before(ptr, new_o);
+
+   return new_o;
+ }
+
+
+
+
+void* set_insert(set* s, const void* o)
+ { list_ptr ptr;
+
+   sdbg_check_set_is_valid(s, "set_insert");
+
+   for (ptr = list_ptr_head(s->set_list); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+    { void* set_obj;
+      int   compare_result;
+
+      set_obj = list_ptr_element(ptr);
+      compare_result = object_compare(s, o, set_obj);
+
+      if (compare_result < 0)
+       { /* Because set_list is ordered, set_obj and all further elements will be > o so we add o */
+         return add_object(s, ptr, o);
+       }
+      if (compare_result == 0)
+       { /* Object is in the set already - no need to add o, just exit */
+         return NULL;
+       }
+    }
+
+   /* 'o' needs to be added but hasn't been, so we add it now */
+   assert(list_ptr_past_the_end(ptr));
+   return add_object(s, ptr, o);
+ }
+
+
+
+
+void set_remove(set* s, const void* o)
+ { list_ptr ptr;
+
+   sdbg_check_set_is_valid(s, "set_remove");
+
+   for (ptr = list_ptr_head(s->set_list); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+    { void* set_obj;
+      int   compare_result;
+
+      set_obj = list_ptr_element(ptr);
+      compare_result = object_compare(s,o,set_obj);
+
+      if (compare_result < 0)
+       { /* Because set_list is ordered, set_obj and all further elements will be > o so there's no match */
+         return;
+       }
+      if (compare_result == 0)
+       { /* Match found: remove and free the element */
+         list_ptr_remove_element(ptr);
+         list_free_element(set_obj);
+         return;
+       }
+    }
+ }
+
+
+
+
+void* set_contains(const set* s, const void* o)
+ { list_ptr ptr;
+
+   sdbg_check_set_is_valid(s, "set_contains");
+
+   for (ptr = list_ptr_head(s->set_list); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+    { void* set_obj;
+      int   compare_result;
+
+      set_obj = list_ptr_element(ptr);
+      compare_result = object_compare(s,o,set_obj);
+
+      if (compare_result < 0)
+       { /* Because set_list is ordered, set_obj and all further elements will be > o so there's no match */
+         return NULL;
+       }
+      if (compare_result == 0)
+       { /* Match found */
+         return set_obj;
+       }
+    }
+   /* All elements checked - no match */
+   return NULL;
+ }
+
+
+
+
+unsigned set_elements(const set* s)
+ { sdbg_check_set_is_valid(s, "set_elements");
+
+   return list_length(s->set_list);
+ }
+
+
+
+
+set_ptr set_ptr_first(const set* s)
+ { sdbg_check_set_is_valid(s, "set_ptr_head");
+
+   return (set_ptr)list_ptr_head(s->set_list);
+ }
+
+
+
+
+bool set_ptr_past_the_end(set_ptr sptr)
+ { return list_ptr_past_the_end((list_ptr)sptr);
+ }
+
+
+
+
+void set_ptr_inc(set_ptr* sptr)
+ { assert(sptr != NULL);
+   assert(!set_ptr_past_the_end(*sptr));
+
+   list_ptr_inc((list_ptr*)sptr);
+ }
+
+
+
+
+void* set_ptr_element(set_ptr sptr)
+ { assert(!set_ptr_past_the_end(sptr));
+
+   return list_ptr_element((list_ptr)sptr);
+ }

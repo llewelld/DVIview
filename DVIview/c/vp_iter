@@ -1,0 +1,919 @@
+/*** vp_iter.c ***/
+/* A print_iterator that handles a variety of print types
+ * (c) Paul Field 1996
+ */
+
+#include "vp_iter.h"
+
+#include <assert.h>
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "macros.h"
+#include "pdriver.h"
+
+#include "error.h"
+#include "exception.h"
+#include "message.h"
+#include "nevent.h"
+#include "hourglass.h"
+
+#include "vp_font.h"
+#include "vp_side.h"
+
+
+#define ceiling_divide(a,b) (((a)+(b)-1)/(b))
+ /* Performs integer division with rounding up.
+  */
+
+#define DoubleToFixPoint(d) ((int) ((d)*65536.0))
+ /* Converts a double to a fixpoint number
+  */
+
+
+enum { MaxPagesPerSide = 8 };
+
+
+static void vp_iterator_destruct(void);
+
+
+
+
+static void report_message(const char* message_tag)
+ { wimp_event_no          event_code;
+   nevent_poll_controller old_controller;
+
+   /* Report message */
+   error_report_information(message_lookup(message_tag));
+
+   /* Poll so that error window will disappear */
+   old_controller = nevent_force_poll_bits_clear(wimp_MASK_NULL); /* Make sure we get NULL events */
+
+   do
+    { event_code = nevent_poll(NULL, NULL);
+    }
+   while (event_code != wimp_NULL_REASON_CODE);
+
+   nevent_set_poll_control(old_controller);
+
+
+   /* Hourglass is disabled by error_report_string() so we re-enable it */
+   hourglass_on();
+ }
+
+
+
+/**** Print types ****/
+
+/**** Functions for generating abstract page numbers ****/
+
+static void linear_numbers(unsigned pages_per_side, unsigned side_number, unsigned sides, unsigned abstract_page_numbers[])
+ { unsigned page_index;
+
+   assert(side_number < sides);
+   assert(abstract_page_numbers);
+   assert(pages_per_side <= MaxPagesPerSide);
+
+   NOT_USED(sides);
+
+   for (page_index = 0; page_index < pages_per_side; page_index++)
+    { abstract_page_numbers[page_index] = side_number*pages_per_side + page_index;
+    }
+ }
+
+
+
+
+static void twoup_numbers(unsigned pages_per_side, unsigned side_number, unsigned sides, unsigned abstract_page_numbers[])
+ { unsigned last_side_number;
+
+   assert(side_number < sides);
+   assert(abstract_page_numbers);
+   assert(pages_per_side == 2);
+
+   NOT_USED(pages_per_side);
+
+   /* Make sure even-numbered pages are on the right (i.e. abstract_page_numbers[1]) */
+   last_side_number = sides*2-1;
+
+   if (side_number % 2 == 0)
+    { abstract_page_numbers[0] = last_side_number - side_number;
+      abstract_page_numbers[1] = side_number;
+    }
+   else
+    { abstract_page_numbers[0] = side_number;
+      abstract_page_numbers[1] = last_side_number - side_number;
+    }
+ }
+
+
+
+
+static void fourup_numbers(unsigned pages_per_side, unsigned side_number, unsigned sides, unsigned abstract_page_numbers[])
+ { assert(side_number < sides);
+   assert(abstract_page_numbers);
+   assert(pages_per_side == 4);
+
+   NOT_USED(pages_per_side);
+
+   abstract_page_numbers[1] = side_number*2;
+   abstract_page_numbers[0] = sides*4-1 - abstract_page_numbers[1];
+   abstract_page_numbers[2] = abstract_page_numbers[0]-1;
+   abstract_page_numbers[3] = abstract_page_numbers[1]+1;
+ }
+
+
+
+
+/**** Functions for turning page ranges into side ranges ****/
+
+static void linear_side_range
+ ( unsigned  pages_per_side,
+   unsigned  sides,
+   unsigned  first_page,
+   unsigned  last_page,
+   unsigned* first_side,
+   unsigned* last_side
+ )
+ { assert(first_page <= last_page);
+   assert(last_page < sides*pages_per_side);
+   assert(first_side);
+   assert(last_side);
+
+   NOT_USED(sides);
+
+   *first_side = first_page / pages_per_side;
+   *last_side  = last_page  / pages_per_side;
+
+   assert(*first_side <= *last_side);
+   assert(*last_side < sides);
+ }
+
+
+
+
+static void twoup_side_range
+ ( unsigned  pages_per_side,
+   unsigned  sides,
+   unsigned  first_page,
+   unsigned  last_page,
+   unsigned* first_side,
+   unsigned* last_side
+ )
+ { unsigned max_page;
+
+   assert(pages_per_side == 2);
+   assert(first_page <= last_page);
+   assert(last_page < sides*pages_per_side);
+   assert(first_side);
+   assert(last_side);
+
+   NOT_USED(pages_per_side);
+
+
+   max_page = sides*2-1;
+
+   if (first_page < sides)
+    { if (last_page < sides)
+       { *first_side = first_page;
+         *last_side  = last_page;
+       }
+      else
+       { *first_side = MIN(first_page, max_page - last_page);
+         *last_side  = sides-1;
+       }
+    }
+   else
+    { *first_side = max_page - last_page;
+      *last_side  = max_page - first_page;
+    }
+
+   assert(*first_side <= *last_side);
+   assert(*last_side < sides);
+ }
+
+
+
+
+static void fourup_side_range
+ ( unsigned  pages_per_side,
+   unsigned  sides,
+   unsigned  first_page,
+   unsigned  last_page,
+   unsigned* first_side,
+   unsigned* last_side
+ )
+ { assert(pages_per_side == 4);
+   assert(first_page <= last_page);
+   assert(last_page < sides*pages_per_side);
+   assert(first_side);
+   assert(last_side);
+
+   NOT_USED(pages_per_side);
+
+   twoup_side_range(2, sides, first_page/2, last_page/2, first_side, last_side);
+
+   assert(*first_side <= *last_side);
+   assert(*last_side < sides);
+ }
+
+
+
+
+
+
+/**** Functions for generating abstract areas ****/
+
+static void upright_areas
+ ( int           fixpoint_scaling,
+   unsigned      num_areas_across,
+   unsigned      num_areas_down,
+   unsigned      area_width,
+   unsigned      area_height,
+   vp_transform  areas[]
+ )
+ { unsigned across_index;
+   unsigned down_index;
+   unsigned area_index;
+   unsigned first_row_y;
+
+   assert(areas);
+
+   /* Y coordinate at which the first (topmost) row should appear */
+   first_row_y = (num_areas_down-1) * area_height;
+
+   area_index = 0;
+
+   for (down_index = 0; down_index < num_areas_down; down_index++)
+    { for (across_index = 0; across_index < num_areas_across; across_index++)
+       { os_hom_trfm* t;
+         os_coord*    o;
+
+         o = &areas[area_index].origin;
+         o->x = across_index * area_width;
+         o->y = first_row_y - down_index * area_height;
+
+         t = &areas[area_index].transformation;
+         t->entries[0][0] = fixpoint_scaling;  t->entries[1][0] = 0;
+         t->entries[0][1] = 0;                 t->entries[1][1] = fixpoint_scaling;
+
+         area_index++;
+       }
+    }
+ }
+
+
+
+
+static void rotated_areas
+ ( int           fixpoint_scaling,
+   unsigned      num_areas_across,
+   unsigned      num_areas_down,
+   unsigned      area_width,
+   unsigned      area_height,
+   vp_transform  areas[]
+ )
+ { unsigned across_index;
+   unsigned down_index;
+   unsigned area_index;
+
+   assert(areas);
+
+   /* Like upright but under an anti-clockwise 90 degree rotation:
+    *   [ 0 -1 ]
+    *   [ 1  0 ]
+    * This affects dx and dy:
+    *  [dx']  =  [ 0 -1 ] [dx]  = [-dy]
+    *  [dy']     [ 1  0 ] [dy]    [ dx]
+    * However, this rotation moves all of the areas off of the sheet so they need
+    * to be translated horizontally (by 'total_height') to bring them back on:
+    * +---+                 +---+             +---+
+    * |   |     Rotate  X X |   |  Translate  |X X|
+    * |   |       ->    X X |   |     ->      |X X|
+    * |X X|X X    ->    X X |   |     ->      |X X|
+    * |X X|X X          X X |   |             |X X|
+    * +---+                 +---+             +---+
+    */
+
+   area_index = 0;
+
+   for (down_index = 0; down_index < num_areas_down; down_index++)
+    { for (across_index = 0; across_index < num_areas_across; across_index++)
+       { os_hom_trfm* t;
+         os_coord*    o;
+
+         o = &areas[area_index].origin;
+         o->x = (down_index+1) * area_height;
+         o->y = across_index * area_width;
+
+         t = &areas[area_index].transformation;
+         t->entries[0][0] = 0;                 t->entries[1][0] = -fixpoint_scaling;
+         t->entries[0][1] = fixpoint_scaling;  t->entries[1][1] = 0;
+
+         area_index++;
+       }
+    }
+ }
+
+
+
+
+static void grid_arrangement
+ ( int           fixpoint_scaling,
+   unsigned      num_areas,
+   unsigned      area_width,
+   unsigned      area_height,
+   bool          rotated,
+   vp_transform  areas[]
+ )
+ { static const unsigned num_across_lookup[] = {0,1,2,0,2,0,0,0,4};
+   unsigned num_across;
+   unsigned num_down;
+
+   assert(MaxPagesPerSide <= COUNT(num_across_lookup));
+   assert(num_across_lookup[num_areas] != 0);
+
+   if (rotated)
+    { num_across = num_across_lookup[num_areas];
+      num_down   = num_areas/num_across;
+    }
+   else
+    { num_down   = num_across_lookup[num_areas];
+      num_across = num_areas/num_down;
+    }
+
+   (rotated ? rotated_areas : upright_areas)
+     ( fixpoint_scaling,
+       num_across,
+       num_down,
+       area_width,
+       area_height,
+       areas
+     );
+ }
+
+
+
+
+static void fourup_arrangement
+ ( int           fixpoint_scaling,
+   unsigned      num_areas,
+   unsigned      area_width,
+   unsigned      area_height,
+   bool          rotated,
+   vp_transform  areas[]
+ )
+ { /* Anti-clockwise rotations */
+   static const os_hom_trfm rotation[4] =
+    { {  1,  0,  0,  1 },  /*   0 degrees */
+      {  0,  1, -1,  0 },  /*  90 degrees */
+      { -1,  0,  0, -1 },  /* 180 degrees */
+      {  0, -1,  1,  0 }   /* 270 degrees */
+    };
+
+   /* How the areas are laid out */
+   static const struct
+    { unsigned rotation_index;
+      unsigned x;
+      unsigned y;
+    }
+   arrangement[4] =
+    { { 0, 0,1 },  { 0, 1,1 },
+      { 2, 1,1 },  { 2, 2,1 }
+    };
+
+   unsigned area_index;
+
+   assert(areas);
+   assert(num_areas == 4);
+
+   NOT_USED(num_areas);
+
+   for (area_index = 0; area_index < 4; area_index++)
+    { unsigned     rotation_index;
+      unsigned     x;
+      unsigned     y;
+      os_hom_trfm* t;
+
+      rotation_index = arrangement[area_index].rotation_index;
+      x = arrangement[area_index].x * area_width;
+      y = arrangement[area_index].y * area_height;
+
+      if (rotated)
+       { int temp;
+
+         /* Rotate an extra 90 degrees */
+         rotation_index++;
+
+         /* Swap x and y */
+         temp = x;
+         x = y;
+         y = temp;
+       }
+
+      t = &areas[area_index].transformation;
+      t->entries[0][0] = rotation[rotation_index].entries[0][0] * fixpoint_scaling;
+      t->entries[0][1] = rotation[rotation_index].entries[0][1] * fixpoint_scaling;
+      t->entries[1][0] = rotation[rotation_index].entries[1][0] * fixpoint_scaling;
+      t->entries[1][1] = rotation[rotation_index].entries[1][1] * fixpoint_scaling;
+
+      areas[area_index].origin.x       = x;
+      areas[area_index].origin.y       = y;
+    }
+ }
+
+
+
+
+
+typedef struct type_info_str
+ { unsigned pages_per_side;
+   unsigned rotated;
+
+   void (*get_page_numbers)(unsigned pages_per_side, unsigned side_number, unsigned sides, unsigned abstract_page_numbers[]);
+
+   void (*get_side_range)
+    ( unsigned  pages_per_side,
+      unsigned  sides,
+      unsigned  first_page,
+      unsigned  last_page,
+      unsigned* first_side,
+      unsigned* last_side
+    );
+
+   void (*get_arrangement)
+    ( int          fixpoint_scaling,
+      unsigned     num_areas,
+      unsigned     area_width,
+      unsigned     area_height,
+      bool         rotated,
+      vp_transform areas[]
+    );
+ }type_info;
+
+
+static const type_info info[vprint_type_LIMIT] =
+ { { 1, FALSE, linear_numbers, linear_side_range, grid_arrangement   },  /* all  */
+   { 2, TRUE,  linear_numbers, linear_side_range, grid_arrangement   },  /* 2 pages */
+   { 4, FALSE, linear_numbers, linear_side_range, grid_arrangement   },  /* 4 pages */
+   { 8, TRUE,  linear_numbers, linear_side_range, grid_arrangement   },  /* 8 pages */
+   { 2, TRUE,  twoup_numbers,  twoup_side_range,  grid_arrangement   },  /* two-up  */
+   { 4, FALSE, fourup_numbers, fourup_side_range, fourup_arrangement }   /* four-up */
+ };
+
+
+
+
+/**** The iterator ****/
+
+
+static const print_doc*      document;
+static const vprint_choices* choices;
+static const type_info*      print_info;
+static vp_area*              area[MaxPagesPerSide];
+static unsigned              run;
+static unsigned              immediate_copies;
+static unsigned              side_num;
+static unsigned              sides_per_sheet;
+static unsigned              sheet_num;
+static unsigned              sheets;
+static unsigned              sides;
+static unsigned              range_first_side;
+static unsigned              range_last_side;
+
+
+
+#ifndef NDEBUG
+static bool constructed = FALSE;
+
+static void note_construction(void)
+ { assert(!constructed);
+   constructed = TRUE;
+ }
+
+static void note_destruction(void)
+ { assert(constructed);
+   constructed = FALSE;
+ }
+#else
+#define note_construction()
+#define note_destruction()
+#endif
+
+
+
+static void paper_size(unsigned* paper_width, unsigned* paper_height)
+ { int width;
+   int height;
+
+   pdriver_page_size(&width, &height, NULL, NULL, NULL, NULL);
+   *paper_width  = width;
+   *paper_height = height;
+
+ }
+
+
+
+
+static bool fit_page_on_paper(unsigned paper_width, unsigned paper_height, unsigned page_width, unsigned page_height, double* scale)
+ { /* Calculate scaling and orientation required to fit one page on a sheet of paper */
+
+   bool      paper_is_landscape;
+   bool      page_is_landscape;
+   bool      rotate_page;
+   double    scale_to_fit_width;
+   double    scale_to_fit_height;
+
+   paper_is_landscape = paper_width < paper_height;
+   page_is_landscape  = page_width < page_height;
+
+   rotate_page = (paper_is_landscape != page_is_landscape);
+
+   if (rotate_page)
+    { scale_to_fit_width  = paper_width  / (double) page_height;
+      scale_to_fit_height = paper_height / (double) page_width;
+    }
+   else
+    { scale_to_fit_width  = paper_width  / (double) page_width;
+      scale_to_fit_height = paper_height / (double) page_height;
+    }
+
+   *scale = MIN(scale_to_fit_width, scale_to_fit_height);
+
+   return rotate_page;
+ }
+
+
+
+
+
+
+
+static void create_areas(void)
+ { unsigned     area_index;
+   unsigned     paper_width;
+   unsigned     paper_height;
+   unsigned     page_width;
+   unsigned     page_height;
+   double       scaling;
+   double       scale_to_fit;
+   unsigned     pages_per_side;
+   bool         rotate_page;
+   vp_transform transforms[MaxPagesPerSide];
+
+   document->page_size(document->handle, &page_width, &page_height);
+   paper_size(&paper_width, &paper_height);
+
+   rotate_page = fit_page_on_paper(paper_width, paper_height, page_width, page_height, &scale_to_fit);
+   rotate_page ^= print_info->rotated;
+
+   pages_per_side = print_info->pages_per_side;
+
+   /* Calculate the scaling and size of an area and then calculate the areas */
+   scaling    = scale_to_fit/sqrt(pages_per_side);
+
+   print_info->get_arrangement
+    ( DoubleToFixPoint(scaling),
+      pages_per_side,
+      (unsigned) (page_width * scaling),
+      (unsigned) (page_height * scaling),
+      rotate_page,
+      transforms
+    );
+
+   /* Set all areas to NULL in case of exception */
+   for (area_index = 0; area_index < pages_per_side; area_index++)
+    { area[area_index] = NULL;
+    }
+
+   try
+    { for (area_index = 0; area_index < pages_per_side; area_index++)
+       { area[area_index] = vp_area_construct(&transforms[area_index]);
+
+#if 0
+{ os_hom_trfm* t;
+  os_coord*    o;
+
+  t = &transforms[area_index].transformation;
+  o = &transforms[area_index].origin;
+
+fprintf
+ ( stderr,
+   "Constructed area %u:\n"
+   "  Origin (%d,%d)\n"
+   "  Transform [ %.2f %.2f ]\n"
+   "            [ %.2f %.2f ]\n",
+   area_index,
+   o->x, o->y,
+   t->entries[0][0]/65536.0, t->entries[1][0]/65536.0,
+   t->entries[0][1]/65536.0, t->entries[1][1]/65536.0
+ );
+}
+#endif
+
+       }
+    }
+   catch
+    { vp_iterator_destruct();
+      throw();
+    }
+   catch_end
+ }
+
+
+
+
+static unsigned current_abstract_side_number(void)
+ { unsigned sheet_num_after_reverse;
+   unsigned side_num_after_reverse;
+
+   /* For the paper to be sensibly ordered in the out tray we print in the following order:
+    * Single sided printing:
+    *   Face up printer:   reversed
+    *   Face down printer: normal
+    * Double sided printing:
+    *   Face up/straight-path printer:   reversed 2nd side, reversed 1st side
+    *   Face up/U-path printer:                   2nd side, reversed 1st side
+    *   Face down/straight-path printer: reversed 1st side, reversed 2nd side
+    *   Face down/U-path printer:                 1st side, reversed 2nd side
+    */
+
+
+   /* Choose ordering of sides */
+   if (choices->double_sided && choices->face_up)
+    { /* Print second side first */
+      side_num_after_reverse = 1-side_num;
+    }
+   else
+    { side_num_after_reverse = side_num;
+    }
+
+
+   /* Choose ordering within the side */
+   if ((!choices->double_sided && choices->face_up) ||
+       ( choices->double_sided && (side_num == 1 || choices->straight_path))
+      )
+    { unsigned last_sheet;
+
+      last_sheet = sheets-1;
+      sheet_num_after_reverse = last_sheet - sheet_num;
+    }
+   else
+    { sheet_num_after_reverse = sheet_num;
+    }
+
+
+   return side_num_after_reverse + (sheet_num_after_reverse * sides_per_sheet);
+ }
+
+
+
+
+
+static bool next_one(void)
+ { sheet_num++;
+
+   if (sheet_num >= sheets)
+    { sheet_num = 0;
+
+      side_num++;
+      if (side_num >= sides_per_sheet)
+       { side_num = 0;
+
+         run--;
+         if (run == 0)
+          { return FALSE;
+          }
+       }
+    }
+
+   if (choices->double_sided && sheet_num == 0)
+    { if (side_num == 0)
+       { /* About to start a new copy of side 0, so ask to remove completed copy */
+         report_message("RemovePaper");
+       }
+      else
+       { /* About to start the second side, so ask for paper to be reloaded */
+         report_message("ReloadPaper");
+       }
+    }
+
+   return TRUE;
+ }
+
+
+
+
+void vp_iterator_construct
+ ( const print_doc*      doc,
+   const vprint_choices* c
+ )
+ { unsigned pages_per_sheet;
+   unsigned side;
+
+   assert(doc != NULL);
+   assert(c   != NULL);
+   assert(c->type < vprint_type_LIMIT);
+   assert(info[c->type].pages_per_side <= MaxPagesPerSide);
+
+   document   = doc;
+   choices    = c;
+   print_info = &info[c->type];
+
+   create_areas();
+
+   /* We will iterate through a number of runs */
+   if (c->collate)
+    { run              = c->copies;
+      immediate_copies = 1;
+    }
+   else
+    { run              = 1;
+      immediate_copies = c->copies;
+    }
+
+   /* For each run, we'll iterate though the first side of each sheet and then (if necessary) the second side */
+   side_num = 0;
+   sides_per_sheet = (c->double_sided ? 2 : 1);
+
+
+   /* For each "side" we will iterate through all the sheets to print that side */
+   sheet_num = 0;
+   pages_per_sheet = sides_per_sheet * print_info->pages_per_side;
+   sheets = ceiling_divide(doc->pages(doc->handle), pages_per_sheet);
+
+   sides = sheets * sides_per_sheet;
+
+
+   /* Calculate the range of sides to print */
+   if (c->print_whole_document)
+    { range_first_side = 0;
+      range_last_side  = sides-1;
+    }
+   else
+    { print_info->get_side_range
+       ( print_info->pages_per_side,
+         sides,
+         c->first_page,
+         c->last_page,
+         &range_first_side,
+         &range_last_side
+       );
+
+      /* May need to include extra sheets for the "other side" of some sheets.
+       * Sides are ordered [A_side1, A_side2, B_side1, B_side2 etc...] so, to include both sides of
+       * all sheets, the abstract side range (range_first_side to range_last_side)
+       * must run from an even to an odd number.
+       */
+      if (c->double_sided)
+       { /* If range_first_side isn't even, make it even by expanding the range by one */
+         if (range_first_side % 2 != 0)
+          { range_first_side--;
+          }
+
+         /* If range_last_side is even, make it odd by expaning the range */
+         if (range_last_side % 2 == 0)
+          { range_last_side++;
+          }
+       }
+    }
+
+
+   /* Set up the correct first side */
+   side = current_abstract_side_number();
+   while(side < range_first_side || range_last_side < side)
+    { bool is_more;
+
+      is_more = next_one();
+      assert(is_more);
+      side = current_abstract_side_number();
+    }
+
+   note_construction();
+ }
+
+
+
+
+static unsigned vp_iterator_number(void)
+ { assert(constructed);
+
+   return (range_last_side - range_first_side + 1) * choices->copies;
+ }
+
+
+
+
+static void vp_iterator_declare_fonts(void)
+ { assert(constructed);
+
+   vp_font_declarer_construct();
+
+   try
+    { /* If we're printing the whole document, the document object may be able to optimise
+       * the font declaration (using a global font table for example)
+       */
+      if (document->declare_doc_fonts &&
+          range_first_side == 0 && range_last_side == sides-1
+         )
+       { document->declare_doc_fonts(document->handle, &vp_font_declarer);
+       }
+      else
+       { /* Declare fonts page-by-page */
+         unsigned page_num;
+
+         for (page_num = choices->first_page; page_num <= choices->last_page; page_num++)
+          { document->declare_page_fonts(document->handle, page_num, &vp_font_declarer);
+          }
+       }
+
+      vp_font_declarer_finished();
+    }
+   catch
+    { vp_font_declarer_destruct();
+      throw();
+    }
+   catch_end
+
+   vp_font_declarer_destruct();
+ }
+
+
+
+
+static print_side* vp_iterator_get_side(void)
+ { unsigned pages[MaxPagesPerSide];
+   unsigned num_pages;
+   unsigned side;
+
+   assert(constructed);
+
+   side = current_abstract_side_number();
+   num_pages = print_info->pages_per_side;
+   print_info->get_page_numbers(num_pages, side, sides, pages);
+
+   vp_side_construct(document, num_pages, pages, area);
+
+   return &vp_side;
+ }
+
+
+
+
+static unsigned vp_iterator_copies(void)
+ { assert(constructed);
+
+   return immediate_copies;
+ }
+
+
+
+
+static bool vp_iterator_next(void)
+ { bool     is_more;
+   unsigned side;
+
+   assert(constructed);
+
+   do
+    { is_more = next_one();
+      side = current_abstract_side_number();
+    }
+   while(is_more && (side < range_first_side || range_last_side < side));
+
+
+   if (is_more && choices->pause)
+    { report_message("Paused");
+    }
+
+   return is_more;
+ }
+
+
+
+
+static void vp_iterator_destruct(void)
+ { unsigned area_index;
+
+   note_destruction();
+
+   for (area_index = 0; area_index < print_info->pages_per_side; area_index++)
+    { vp_area_destruct(area[area_index]);
+    }
+ }
+
+
+
+
+print_iterator vp_iterator =
+ { vp_iterator_number,
+   vp_iterator_declare_fonts,
+   vp_iterator_get_side,
+   vp_iterator_copies,
+   vp_iterator_next,
+   vp_iterator_destruct
+ };
+
+
+

@@ -1,0 +1,45 @@
+/**** message.h ****/
+/* Interface to messagetrans
+ * (c) Paul Field
+ * v1.00 - 15/9/1995
+ * v1.01 - 11/6/1996 : removed message_error_lookup() and message_error_lookup_and_substitute()
+ *                     error.h now provides facilities for reporting strings as errors
+ * v1.02 - 26/5/1996 : Added message_lookup_in_list()
+ */
+
+/* N.B. None of the functions in this module throw exceptions but they do use
+ * exception code internally which means that, when used from a catch block, the
+ * current exception could become corrupted.
+ */
+
+
+const char* message_lookup(const char* tag);
+ /* Pre: tag != NULL
+  *
+  * Looks up the 'tag' in the application's message file (as installed by the Toolbox)
+  * and, if not found there, the global message file, and returns the associated message.
+  * If 'tag' is not found and 'tag' is of the form "tag:default" then default is returned
+  * otherwise tag is returned.
+  * The value returned is valid until the next call to any function in this module.
+  */
+
+
+const char* message_lookup_and_substitute(const char* tag, const char* p0, const char* p1, const char* p2, const char* p3);
+ /* As message_lookup() except that p1,p2,p3,p4 will be substituted for %0, %1, %2, %3
+  * in the message. Any of p1-p4 may be NULL meaning don't substitute that parameter.
+  * The value returned is valid until the next call to any function in this module.
+  */
+
+
+const char* message_lookup_in_list(const char* tag, unsigned index);
+ /* Pre: tag != NULL
+  *      index < 1000
+  *
+  * Calls message_lookup() using tag with a three digit number formed from index
+  * appended to it.
+  *
+  * For example, message_lookup_in_list("Month", 2) would find "February" from these:
+  *  Month001:January
+  *  Month002:February
+  *  Month003:March
+  */

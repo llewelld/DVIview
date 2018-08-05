@@ -1,0 +1,38 @@
+/**** font_set.h ****/
+/* Simple specialisation of a set to hold font names
+ * and an associated tag
+ * (c) Paul Field
+ */
+
+#ifndef _font_set_h
+#define _font_set_h
+
+#include "font.h"
+#include "set.h"
+
+typedef struct font_info_str
+ { char name[font_NAME_LIMIT+1];
+   union
+    { int   id;
+      int   flags;
+      void* ptr;
+    }tag;
+ }font_info;
+
+
+
+/* A font set is a set of font names and each name has an associated tag.
+ * The meaning of the tag is user-defined.
+ * font_infos are considered equal if their names are equal
+ */
+
+typedef set font_set;
+
+
+font_set* font_set_construct(void);
+ /* Exceptions: exception_NO_MEMORY
+  * Use this to create the font set. Afterward you can use the usual set operations
+  * to process the set, remembering that the elements are of type font_info.
+  */
+
+#endif

@@ -1,0 +1,1062 @@
+/**** viewer.c ****/
+/* Handles document views (windows)
+ * (c) Paul Field
+ */
+
+#include "viewer.h"
+
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "displayfield.h"
+#include "numberrange.h"
+#include "macros.h"
+#include "menu.h"
+#include "saveas.h"
+#include "scale.h"
+#include "window.h"
+
+#include "exception.h"
+#include "list.h"
+#include "message.h"
+#include "nev_wimp.h"
+#include "nev_toolbox.h"
+#include "save_buffer.h"
+#include "tbx.h"
+
+#include "choices.h"
+#include "magnifier.h"
+#include "optionfile.h"
+#include "vprint_dbx.h"
+
+
+
+
+
+
+
+struct viewer_str
+ { toolbox_o object_id;
+   document* doc;
+   unsigned  page_num;
+   page*     p;
+   unsigned  scale_percent;
+   bool      tracking_pointer;
+#ifndef NDEBUG
+   int*      viewer_debug_id;      /* Always == &viewer_debug_id */
+#endif
+ };
+
+
+enum
+ { Ev_ViewPrev         = 0x100,
+   Ev_ViewNext         = 0x101,
+   Ev_ViewFillGoto     = 0x102,
+   Ev_ViewGoto         = 0x103,
+   Ev_ViewFillViewMenu = 0x104,
+   Ev_ViewNew          = 0x105,
+   Ev_ViewClose        = 0x106,
+   Ev_ViewDown         = 0x107,
+   Ev_ViewUp           = 0x108,
+   Ev_ViewLeft         = 0x109,
+   Ev_ViewRight        = 0x10a,
+   Ev_ViewFirst        = 0x10b,
+   Ev_ViewLast         = 0x10c
+ };
+
+
+enum view_menu_component_id
+ { view_menu_document_id,
+   view_menu_prev_id,
+   view_menu_next_id
+ };
+
+enum goto_component_id
+ { goto_value_id,
+   goto_info_id
+ };
+
+
+
+#ifndef NDEBUG
+static bool viewer_initialised = FALSE;
+static int viewer_debug_id;
+
+#define viewer_debug_validate(v) ((v) != NULL && ((v)->viewer_debug_id == &viewer_debug_id))
+#endif
+
+
+
+/* Functions for reading and writing print choices for a document */
+
+static vprint_choices current_choices  = {TRUE, 0, 20000, 1, FALSE, FALSE, FALSE, vprint_type_all};
+
+
+
+static bool print_choices_parse(const char* option, char* params)
+ { if (strcmp(option, "print") == 0)
+    { sscanf
+       ( params,
+         "%u ,%u ,%u ,%u ,%u, %u, %u",
+         &current_choices.copies,
+         &current_choices.face_up,
+         &current_choices.collate,
+         &current_choices.pause,
+         &current_choices.type,
+         &current_choices.double_sided,
+         &current_choices.straight_path
+       );
+      return TRUE;
+    }
+   return FALSE;
+ }
+
+
+
+
+static void print_choices_save(FILE* file)
+ { fprintf
+    ( file,
+      "print:%u,%u,%u,%u,%u,%u,%u\n",
+      current_choices.copies,
+      current_choices.face_up,
+      current_choices.collate,
+      current_choices.pause,
+      current_choices.type,
+      current_choices.double_sided,
+      current_choices.straight_path
+    );
+ }
+
+
+
+
+static const vprint_choices* print_get_choices(void)
+ { return &current_choices;
+ }
+
+
+
+static void print_set_choices(const vprint_choices* choices)
+ { current_choices = *choices;
+ }
+
+
+
+static void print_save_choices(void)
+ { optionsfile_save();
+ }
+
+
+
+
+static vprint_choice_store print_choice_store =
+ { print_get_choices,
+   print_set_choices,
+   print_save_choices
+ };
+
+
+
+
+
+
+
+
+
+
+static void viewer_set_title(const viewer* v)
+ { enum { title_LIMIT = 280 };
+   enum { page_range_LIMIT = 20 };
+
+   char title[title_LIMIT];
+   char page_range[page_range_LIMIT];
+
+
+   assert(title_LIMIT >= os_FILE_NAME_LIMIT + page_range_LIMIT + 3);  /* 3 added for " (" and ")" */
+
+   strncpy(title, dvifile_filename(document_dvifile(v->doc)), title_LIMIT);
+   title[title_LIMIT-1] = '\0';
+
+   sprintf(page_range, message_lookup("PageRange"), v->page_num+1, dvifile_pages(document_dvifile(v->doc)));
+   assert(strlen(page_range) < page_range_LIMIT);
+
+   strcat(title, " (");
+   strcat(title, page_range);
+   strcat(title, ")");
+
+   window_set_title(0, v->object_id, title);
+ }
+
+
+
+
+static nevent_result viewer_redraw(wimp_event_no event_code, wimp_block* event, toolbox_block* id_block, void* vview)
+ { viewer*           view = vview;
+   bool              more;
+   int               origin_x;
+   int               origin_y;
+
+   int left;
+   int top;
+   int rounded_left;
+   int rounded_top;
+
+   assert(event_code == wimp_REDRAW_WINDOW_REQUEST);
+   assert(event);
+   assert(viewer_debug_validate(view));
+   NOT_USED(id_block);
+   NOT_USED(event_code);
+
+   more = wimp_redraw_window(&event->redraw);
+
+   origin_x = (event->redraw.box.x0 - event->redraw.xscroll)*DrawinOS;
+   origin_y = (event->redraw.box.y1 - event->redraw.yscroll)*DrawinOS;
+
+
+   /* When a page is being plotted, coordinates of objects on a page may be calculated
+    * using Draw coordinates and rounded to find the pixel coordinates of the object.
+    * This rounding can cause objects to be a different distance from each other (in pixels)
+    * when different document offsets are used.
+    *
+    * For example, imagine there are 4 draw coordinates in a pixel:
+    *
+    * Offset = 0
+    * ~~~~~~~~~~
+    * Draw coordinate:  0  1  2  3  4  5  6  7  8  9 10 11
+    *                  +----------++----------++----------+
+    * Pixels:          |         *||   *      ||          |   <- Stars represent draw objects
+    *                  +----------++----------++----------+
+    *
+    * Offset = 1
+    * ~~~~~~~~~~
+    * Draw coordinate:  0  1  2  3  4  5  6  7  8  9 10 11
+    *                  +----------++----------++----------+
+    * Pixels:          |          ||*     *   ||          |   <- Stars represent draw objects
+    *                  +----------++----------++----------+
+    *
+    * The two draw objects are moved along by 1 draw unit. They are still the same distance apart
+    * in Draw units but now occupy the same pixel, whereas before they were in adjacent pixels.
+    *
+    * This means we can't use wimp_block_copy() to update the viewer when the offsets are changed
+    * because, at the pixel level, objects may have changed their relative distances.
+    * However, if we arranged for offsets to always be a multiple of pixel size this wouldn't happen.
+    *
+    * The number of draw coordinates in a pixel changes with scaling and we also want to allow
+    * fine control over offsets for printing (a pixel is around 1/2mm) so instead of forcing
+    * the offsets to be multiples of pixel size, we add an adjustment to the origin so that
+    * origin + offsets always falls on the corner of a pixel.
+    */
+
+
+   dvifile_offsets(document_dvifile(view->doc), &left, &top);
+   left = (left * (int)view->scale_percent)/100;
+   top  = (top  * (int)view->scale_percent)/100;
+
+   rounded_left = left;
+   rounded_top  = top;
+   units_round_draw_to_pixel(&rounded_left, &rounded_top);
+
+   origin_x += rounded_left - left;
+   origin_y -= rounded_top  - top;
+
+   try
+    { while (more)
+       { page_draw(view->p, origin_x, origin_y, view->scale_percent, &event->redraw.clip);
+         more = wimp_get_rectangle(&event->redraw);
+       }
+    }
+   catch
+    { /* Run through any remaining rectangles */
+      do
+       { more = wimp_get_rectangle(&event->redraw);
+       }
+      while(more);
+      throw();
+    }
+   catch_end
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result viewer_gain_focus(wimp_event_no event_code, wimp_block* event, toolbox_block* id_block, void* handle)
+ { assert(event_code == wimp_MOUSE_CLICK);
+   NOT_USED(handle);
+   NOT_USED(id_block);
+   NOT_USED(event_code);
+
+   if (event->pointer.buttons & wimp_CLICK_SELECT)
+    { wimp_set_caret_position(event->pointer.w, -1, 0, 0, 1u<<25, 0); /* invisible caret */
+    }
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static void viewer_mouse_position(const viewer* view, int* x, int* y)
+ /* Returns (via x and y) the position of the pointer in work area (Draw) coordinates relative to the window window_id
+  */
+ { wimp_pointer      pointer;
+   wimp_window_state window_state;
+   int               origin_x;
+   int               origin_y;
+
+   window_state.w = window_get_wimp_handle(0, view->object_id);
+   wimp_get_window_state(&window_state);
+   origin_x = window_state.visible.x0 - window_state.xscroll;
+   origin_y = window_state.visible.y1 - window_state.yscroll;
+
+   wimp_get_pointer_info(&pointer);
+   *x = ((pointer.pos.x - origin_x)*100)/(int)view->scale_percent * DrawinOS;
+   *y = ((pointer.pos.y - origin_y)*100)/(int)view->scale_percent * DrawinOS;
+ }
+
+
+
+
+static void viewer_track_pointer(void* vview)
+ { viewer* view = vview;
+   int     x;
+   int     y;
+
+   assert(view->tracking_pointer);
+
+   viewer_mouse_position(view, &x, &y);
+   magnifier_set_position(x,y);
+ }
+
+
+
+
+static nevent_result viewer_pointer_entering(wimp_event_no event_code, wimp_block* event, toolbox_block* id_block, void* vview)
+ { viewer* view = vview;
+   int     x;
+   int     y;
+
+   assert(event_code == wimp_POINTER_ENTERING_WINDOW);
+   assert(id_block->this_obj == view->object_id);
+   assert(!view->tracking_pointer);
+
+   NOT_USED(event_code);
+   NOT_USED(event);
+   NOT_USED(id_block);
+
+   viewer_mouse_position(view, &x, &y);
+   magnifier_set_page(view->p, x, y, viewer_track_pointer, view);
+
+   view->tracking_pointer = TRUE;
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result viewer_pointer_leaving(wimp_event_no event_code, wimp_block* event, toolbox_block* id_block, void* vview)
+ { viewer* view = vview;
+
+   assert(event_code == wimp_POINTER_LEAVING_WINDOW);
+   assert(id_block->this_obj == view->object_id);
+   assert(view->tracking_pointer);
+
+   NOT_USED(event_code);
+   NOT_USED(event);
+   NOT_USED(id_block);
+
+   magnifier_set_empty();
+   view->tracking_pointer = FALSE;
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static void viewer_new_page(viewer* view, toolbox_o view_id, unsigned page_num)
+ { page*    p;
+   dvifile* dvi;
+
+   assert(viewer_debug_validate(view));
+
+   dvi = document_dvifile(view->doc);
+   assert(page_num < dvifile_pages(dvi));
+
+   if (page_num != view->page_num)
+    { os_box            extent;
+      wimp_window_state state;
+      wimp_open*        o;
+      os_box            bounds;
+      int               left;
+      int               top;
+
+      p = dvifile_page(dvi, page_num);
+
+      page_dec_reference(view->p);
+      view->p = p;
+      view->page_num = page_num;
+
+      /* Redraw whole window */
+      window_get_extent(0, view_id, &extent);
+      window_force_redraw(0, view_id, &extent);
+
+
+      /* Show the top left of the page contents */
+      page_bounds(p, 0, 0, &bounds);
+      left = ((bounds.x0 / DrawinOS) * (int)view->scale_percent)/100;
+      top  = ((bounds.y1 / DrawinOS) * (int)view->scale_percent)/100;
+
+      state.w = window_get_wimp_handle(0, view_id);
+      wimp_get_window_state(&state);
+      o = (wimp_open *)&state;
+
+      o->xscroll = MIN(o->xscroll, left); /* If we're currently displaying part of the top or left margins, carry on doing so */
+      o->yscroll = MAX(o->yscroll, top);
+
+      /* o->yscroll = 0; */  /* We used to open just at the top of the page */
+      wimp_open_window(o);
+
+
+      /* Change the page number in the title */
+      viewer_set_title(view);
+
+
+      /* If the magnifier is using this viewer's page, we must inform the magnifier of the new page */
+      if (view->tracking_pointer)
+       { int x;
+         int y;
+
+         viewer_mouse_position(view, &x, &y);
+         magnifier_set_page(p,x,y, viewer_track_pointer, view);
+       }
+    }
+ }
+
+
+
+
+static void viewer_view_menu_set_options(toolbox_o menu_id, const viewer* view)
+ { menu_set_fade(0, menu_id, view_menu_prev_id, view->page_num == 0);
+   menu_set_fade(0, menu_id, view_menu_next_id, view->page_num == dvifile_pages(document_dvifile(view->doc))-1);
+ }
+
+
+
+
+static nevent_result viewer_fill_view_menu(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { viewer* view;
+
+   assert(event_code == Ev_ViewFillViewMenu);
+   NOT_USED(handle);
+   NOT_USED(event);
+   NOT_USED(event_code);
+
+   view = toolbox_get_client_handle(0, id_block->ancestor_obj);
+   assert(viewer_debug_validate(view));
+   viewer_view_menu_set_options(id_block->this_obj, view);
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result viewer_next_page(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { viewer*   view;
+   toolbox_o view_id;
+
+   assert(event_code == Ev_ViewNext);
+   NOT_USED(handle);
+   NOT_USED(event);
+   NOT_USED(event_code);
+
+   view_id = id_block->ancestor_obj != 0 ? id_block->ancestor_obj : id_block->this_obj;
+   view = toolbox_get_client_handle(0, view_id);
+   assert(viewer_debug_validate(view));
+   if (view->page_num+1 < dvifile_pages(document_dvifile(view->doc)))
+    { viewer_new_page(view, view_id, view->page_num+1);
+      if (id_block->ancestor_obj != toolbox_NULL_OBJECT)
+       { /* This event came from the menu. Set the 'previous' and 'next' options in case Adjust was used */
+         viewer_view_menu_set_options(id_block->this_obj, view);
+       }
+    }
+   else
+    { os_bell();
+    }
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result viewer_previous_page(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { viewer*   view;
+   toolbox_o view_id;
+
+   assert(event_code == Ev_ViewPrev);
+   NOT_USED(handle);
+   NOT_USED(event);
+   NOT_USED(event_code);
+
+   view_id = id_block->ancestor_obj != toolbox_NULL_OBJECT ? id_block->ancestor_obj : id_block->this_obj;
+   view = toolbox_get_client_handle(0, view_id);
+   assert(viewer_debug_validate(view));
+   if (view->page_num >= 1)
+    { viewer_new_page(view, view_id, view->page_num-1);
+      if (id_block->ancestor_obj != toolbox_NULL_OBJECT)
+       { /* This event came from the menu. Set the 'previous' and 'next' options in case Adjust was used */
+         viewer_view_menu_set_options(id_block->this_obj, view);
+       }
+    }
+   else
+    { os_bell();
+    }
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result viewer_first(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { viewer*   view;
+   toolbox_o view_id;
+
+   assert(event_code == Ev_ViewFirst);
+   NOT_USED(handle);
+   NOT_USED(event);
+   NOT_USED(event_code);
+
+   view_id = id_block->ancestor_obj != 0 ? id_block->ancestor_obj : id_block->this_obj;
+   view = toolbox_get_client_handle(0, view_id);
+   assert(viewer_debug_validate(view));
+
+   viewer_new_page(view, view_id, 0);
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result viewer_last(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { viewer*   view;
+   toolbox_o view_id;
+
+   assert(event_code == Ev_ViewLast);
+   NOT_USED(handle);
+   NOT_USED(event);
+   NOT_USED(event_code);
+
+   view_id = id_block->ancestor_obj != 0 ? id_block->ancestor_obj : id_block->this_obj;
+   view = toolbox_get_client_handle(0, view_id);
+   assert(viewer_debug_validate(view));
+
+   viewer_new_page(view, view_id, dvifile_pages(document_dvifile(view->doc))-1);
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result viewer_scroll(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { wimp_window_state state;
+   toolbox_o         view_id;
+
+   assert(event_code == Ev_ViewDown || event_code == Ev_ViewUp || event_code == Ev_ViewLeft || event_code == Ev_ViewRight);
+   NOT_USED(handle);
+   NOT_USED(event);
+
+   view_id = id_block->ancestor_obj != toolbox_NULL_OBJECT ? id_block->ancestor_obj : id_block->this_obj;
+   state.w = window_get_wimp_handle(0, view_id);
+   wimp_get_window_state(&state);
+
+   switch(event_code)
+    { case Ev_ViewDown  : state.yscroll -= (state.visible.y1 - state.visible.y0); break;
+      case Ev_ViewUp    : state.yscroll += (state.visible.y1 - state.visible.y0); break;
+      case Ev_ViewLeft  : state.xscroll -= (state.visible.x1 - state.visible.x0); break;
+      case Ev_ViewRight : state.xscroll += (state.visible.x1 - state.visible.x0); break;
+    }
+
+   wimp_open_window((wimp_open *)&state);
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result viewer_fill_goto(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { const viewer*  view;
+   char           buffer[50];
+   unsigned       pages;
+
+   assert(event_code == Ev_ViewFillGoto);
+   NOT_USED(handle);
+   NOT_USED(event);
+   NOT_USED(event_code);
+
+   view = toolbox_get_client_handle(0, id_block->ancestor_obj);
+   assert(viewer_debug_validate(view));
+
+   pages = dvifile_pages(document_dvifile(view->doc));
+   numberrange_set_value(0, id_block->this_obj, goto_value_id, view->page_num+1);
+   numberrange_set_bounds(numberrange_BOUND_UPPER, id_block->this_obj, goto_value_id, 0, pages, 1, 0);
+   sprintf(buffer, message_lookup("PageRange"), view->page_num+1, pages);
+   displayfield_set_value(0, id_block->this_obj, goto_info_id, buffer);
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result viewer_goto(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { viewer* view;
+   int     page_num;
+   char    buffer[50];
+
+   assert(event_code == Ev_ViewGoto);
+   NOT_USED(handle);
+   NOT_USED(event);
+   NOT_USED(event_code);
+
+   page_num = numberrange_get_value(0, id_block->this_obj, goto_value_id);
+   view = toolbox_get_client_handle(0, id_block->ancestor_obj);
+   assert(viewer_debug_validate(view));
+
+   viewer_new_page(view, id_block->ancestor_obj, page_num-1);
+
+   /* Update 'Page range' display field in case Adjust was used & dialogue remains open */
+   sprintf(buffer, message_lookup("PageRange"), page_num, dvifile_pages(document_dvifile(view->doc)));
+   displayfield_set_value(0, id_block->this_obj, goto_info_id, buffer);
+
+   /* If dialogue is part of the menu then update the menu options in case Adjust was used */
+#if 0
+/* Doesn't work - appears to be a problem with the toolbox */
+      if (id_block->parent_id != id_block->ancestor_obj)
+       { viewer_view_menu_set_options(id_block->parent_id, view);
+       }
+#endif
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result viewer_close(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { viewer* view;
+
+   assert(event_code == Ev_ViewClose);
+   NOT_USED(handle);
+   NOT_USED(event);
+   NOT_USED(event_code);
+
+   view = toolbox_get_client_handle(0, id_block->this_obj);
+   assert(viewer_debug_validate(view));
+
+   viewer_destruct(view);
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result viewer_fill_scale(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { const viewer* view;
+
+   assert(event_code == action_SCALE_ABOUT_TO_BE_SHOWN);
+   NOT_USED(event);
+   NOT_USED(event_code);
+   NOT_USED(handle);
+
+   view = toolbox_get_client_handle(0, id_block->ancestor_obj);
+
+   assert(viewer_debug_validate(view));
+   assert(view->object_id == id_block->ancestor_obj);
+
+   scale_set_value(0, id_block->this_obj, view->scale_percent);
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result viewer_scale(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { viewer* view;
+   unsigned new_scale;
+
+   assert(event_code == action_SCALE_APPLY_FACTOR);
+   NOT_USED(event_code);
+   NOT_USED(handle);
+
+   view = toolbox_get_client_handle(0, id_block->ancestor_obj);
+
+   assert(viewer_debug_validate(view));
+   assert(view->object_id == id_block->ancestor_obj);
+
+   new_scale = ((scale_action_apply_factor *)event->data.reserved)->percent;
+   if (new_scale == (unsigned)-1)
+    { /* Scale to fit */
+      wimp_window_state state;
+      unsigned          width;
+      unsigned          height;
+      unsigned          xscale_percent;
+      unsigned          yscale_percent;
+
+      state.w = window_get_wimp_handle(0, view->object_id);
+      wimp_get_window_state(&state);
+      document_paper_size(view->doc, &width, &height);
+      xscale_percent = (state.visible.x1 - state.visible.x0)*100/width;
+      yscale_percent = (state.visible.y1 - state.visible.y0)*100/height;
+      new_scale = xscale_percent < yscale_percent ? xscale_percent : yscale_percent;
+    }
+
+   if (new_scale != view->scale_percent)
+    { os_box extent;
+
+      view->scale_percent = new_scale;
+      viewer_update_extent(view);
+
+      /* Redraw whole window */
+      window_get_extent(0, view->object_id, &extent);
+      window_force_redraw(0, view->object_id, &extent);
+
+      /* Update the scale dialogue's value (needs updating if scale to fit) */
+      scale_set_value(0, id_block->this_obj, view->scale_percent);
+    }
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result viewer_fill_save(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { const viewer* view;
+   char          filename[11];
+
+   assert(event_code == action_SAVE_AS_ABOUT_TO_BE_SHOWN);
+   NOT_USED(handle);
+   NOT_USED(event);
+   NOT_USED(event_code);
+
+   view = toolbox_get_client_handle(0, id_block->ancestor_obj);
+   assert(viewer_debug_validate(view));
+
+   sprintf(filename, "%.6s%.3u", message_lookup("Page"), view->page_num+1);
+   saveas_set_file_name(0, id_block->this_obj, filename);
+   saveas_set_file_size(0, id_block->this_obj, page_estimate_save_size(view->p)+1);
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result viewer_save_file(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { const viewer* view;
+   const char*   filename;
+
+   assert(event_code == action_SAVE_AS_SAVE_TO_FILE);
+   NOT_USED(handle);
+   NOT_USED(event);
+   NOT_USED(event_code);
+
+   view = toolbox_get_client_handle(0, id_block->ancestor_obj);
+   assert(viewer_debug_validate(view));
+
+   filename = ((saveas_action_save_to_file *)event->data.reserved)->file_name;
+   try
+    { document_save_page(view->doc, view->page_num, filename);
+      saveas_file_save_completed(TRUE, id_block->this_obj, filename);
+    }
+   catch
+    { saveas_file_save_completed(FALSE, id_block->this_obj, filename);
+      throw();
+    }
+   catch_end
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result viewer_save_memory(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { saveas_action_fill_buffer* fill_buffer = (saveas_action_fill_buffer*)event->data.reserved;
+   const viewer* view;
+
+   assert(event_code == action_SAVE_AS_FILL_BUFFER);
+   NOT_USED(handle);
+   NOT_USED(event);
+   NOT_USED(event_code);
+
+   view = toolbox_get_client_handle(0, id_block->ancestor_obj);
+   assert(viewer_debug_validate(view));
+   if (fill_buffer->buffer == NULL)
+    { unsigned width;
+      unsigned height;
+
+      save_buffer_create_for_memory(id_block->this_obj, fill_buffer->size);
+      try
+       { document_paper_size(view->doc, &width, &height);
+         height *= DrawinOS;
+         page_save(view->p, 0, height);
+         save_buffer_destroy(TRUE);
+       }
+      catch
+       { save_buffer_destroy(FALSE);
+         throw();
+       }
+      catch_end
+    }
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static viewer* viewer_copy(const viewer* view)
+ { viewer*   new_view;
+   toolbox_o new_view_id;
+
+   assert(viewer_initialised);
+   assert(viewer_debug_validate(view));
+
+   new_view = list_alloc_element(sizeof(struct viewer_str));
+   new_view->object_id = toolbox_NULL_OBJECT;
+
+   try
+    { new_view_id = toolbox_create_object(0, (toolbox_id)"Viewer");
+      *new_view = *view;
+      new_view->object_id = new_view_id;
+
+      toolbox_set_client_handle(0, new_view_id, new_view);
+
+      nevent_wimp_register_handler(new_view_id, wimp_REDRAW_WINDOW_REQUEST,     viewer_redraw,           new_view);
+      nevent_wimp_register_handler(new_view_id, wimp_MOUSE_CLICK,               viewer_gain_focus,       new_view);
+      nevent_wimp_register_handler(new_view_id, wimp_POINTER_LEAVING_WINDOW,    viewer_pointer_leaving,  new_view);
+      nevent_wimp_register_handler(new_view_id, wimp_POINTER_ENTERING_WINDOW,   viewer_pointer_entering, new_view);
+
+      page_inc_reference(new_view->p);
+      document_add_viewer(new_view->doc, new_view);
+      viewer_update_extent(new_view);
+      viewer_set_title(new_view);
+    }
+   catch
+    { if (new_view->object_id != toolbox_NULL_OBJECT)
+       { nevent_wimp_deregister_all_handlers(new_view->object_id);
+         toolbox_delete_object(0, new_view->object_id);
+       }
+      list_free_element(new_view);
+      throw();
+    }
+   catch_end
+
+   return new_view;
+ }
+
+
+
+
+static nevent_result viewer_new_view(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { const viewer* view;
+
+   assert(event_code == Ev_ViewNew);
+   NOT_USED(handle);
+   NOT_USED(event);
+   NOT_USED(event_code);
+
+   view = toolbox_get_client_handle(0, id_block->ancestor_obj);
+   assert(viewer_debug_validate(view));
+   viewer_copy(view);
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+void viewer_init(void)
+ { toolbox_o save_as_id;
+   toolbox_o scale_id;
+
+   /* Register general viewer events */
+   assert(!viewer_initialised);
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, Ev_ViewNext, viewer_next_page, NULL);
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, Ev_ViewPrev, viewer_previous_page, NULL);
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, Ev_ViewFillGoto, viewer_fill_goto, NULL);
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, Ev_ViewGoto, viewer_goto, NULL);
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, Ev_ViewFillViewMenu, viewer_fill_view_menu, NULL);
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, Ev_ViewNew, viewer_new_view, NULL);
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, Ev_ViewClose, viewer_close, NULL);
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, Ev_ViewDown, viewer_scroll, NULL);
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, Ev_ViewUp, viewer_scroll, NULL);
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, Ev_ViewLeft, viewer_scroll, NULL);
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, Ev_ViewRight, viewer_scroll, NULL);
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, Ev_ViewFirst, viewer_first, NULL);
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, Ev_ViewLast,  viewer_last, NULL);
+
+   scale_id = tbx_shared_object_id("Scale");
+   nevent_toolbox_register_handler(scale_id, action_SCALE_ABOUT_TO_BE_SHOWN, viewer_fill_scale, NULL);
+   nevent_toolbox_register_handler(scale_id, action_SCALE_APPLY_FACTOR,      viewer_scale,      NULL);
+
+   save_as_id = tbx_shared_object_id("SavePage");
+   nevent_toolbox_register_handler(save_as_id, action_SAVE_AS_ABOUT_TO_BE_SHOWN, viewer_fill_save, NULL);
+   nevent_toolbox_register_handler(save_as_id, action_SAVE_AS_SAVE_TO_FILE, viewer_save_file, NULL);
+   nevent_toolbox_register_handler(save_as_id, action_SAVE_AS_FILL_BUFFER, viewer_save_memory, NULL);
+
+#ifndef NDEBUG
+   viewer_initialised = TRUE;
+#endif
+
+   optionsfile_register(print_choices_parse, print_choices_save, NULL);
+   vprint_dbx_init(&abstract_document, &print_choice_store);
+   magnifier_init();
+ }
+
+
+
+
+viewer* viewer_construct(document* doc)
+ { struct viewer_str dummy_view;
+   viewer*           view;
+
+   assert(viewer_initialised);
+   dummy_view.p                = dvifile_page(document_dvifile(doc), 0);
+   dummy_view.doc              = doc;
+   dummy_view.page_num         = 0;
+   dummy_view.scale_percent    = choices_scale();
+   dummy_view.tracking_pointer = FALSE;
+#ifndef NDEBUG
+   dummy_view.viewer_debug_id = &viewer_debug_id;
+#endif
+   view = viewer_copy(&dummy_view);
+#ifndef NDEBUG
+   dummy_view.viewer_debug_id = NULL;  /* Clear address - just in case */
+#endif
+   page_dec_reference(dummy_view.p);
+
+   return view;
+ }
+
+
+
+void viewer_destruct(viewer* view)
+ { if (view != NULL)
+    { page_dec_reference(view->p);
+      document_remove_viewer(view->doc, view);
+#ifndef NDEBUG
+      view->viewer_debug_id = NULL;
+#endif
+      nevent_wimp_deregister_all_handlers(view->object_id);
+      toolbox_delete_object(0, view->object_id);
+      list_free_element(view);
+    }
+ }
+
+
+/* N.B. We can't write viewer_shift_display() in terms of the relative movements because of rounding
+ * problems. i.e. if we move a small amount it may take us over a pixel boundary but to tell whether
+ * that happened we need the absolute coordinates
+ */
+
+void viewer_shift_display(viewer* view, int old_left, int old_top, int left, int top)
+ { wimp_w w;
+   os_box extent;
+   os_box redraw;
+
+   assert(viewer_debug_validate(view));
+
+   /* Scale offsets, round to nearest pixel and convert to OS coords */
+   old_left = (old_left * (int)view->scale_percent)/100;
+   old_top  = (old_top  * (int)view->scale_percent)/100;
+   units_round_draw_to_pixel(&old_left, &old_top);
+   old_left /= DrawinOS;
+   old_top  /= DrawinOS;
+
+   /* Scale offsets, round to nearest pixel and convert to OS coords */
+   left = (left * (int)view->scale_percent)/100;
+   top  = (top  * (int)view->scale_percent)/100;
+   units_round_draw_to_pixel(&left, &top);
+   left /= DrawinOS;
+   top  /= DrawinOS;
+
+   /* Copy the page area to its new position */
+   w = window_get_wimp_handle(0, view->object_id);
+   window_get_extent(0, view->object_id, &extent);
+   wimp_block_copy
+    ( w,
+      extent.x0,
+      extent.y0,
+      extent.x1,
+      extent.y1,
+      extent.x0 - old_left + left,
+      extent.y0 + old_top - top
+    );
+
+   /* Redraw the uncovered vertical strip */
+   redraw = extent;
+   if (left < old_left)
+    { redraw.x0 = redraw.x1 + left - old_left;  /* Strip is on the right */
+    }
+   else
+    { redraw.x1 = redraw.x0 + left - old_left;  /* Strip is on the left */
+    }
+   window_force_redraw(0, view->object_id, &redraw);
+
+   /* Redraw the uncovered horizontal strip */
+   redraw = extent;
+   if (old_top < top)
+    { redraw.y0 = redraw.y1 + old_top - top;  /* Strip is at the top */
+    }
+   else
+    { redraw.y1 = redraw.y0 + old_top - top;  /* Strip is at the bottom */
+    }
+   window_force_redraw(0, view->object_id, &redraw);
+ }
+
+
+
+
+void viewer_update_extent(viewer* view)
+ { os_box            extent;
+   wimp_window_state state;
+   unsigned          width;
+   unsigned          height;
+
+   assert(viewer_debug_validate(view));
+
+   document_paper_size(view->doc, &width, &height);
+   extent.x0 = extent.y1 = 0;
+   extent.x1 = (width * view->scale_percent)/100;
+   extent.y0 = -(int)(height * view->scale_percent)/100;
+
+   window_set_extent(0, view->object_id, &extent);
+
+   /* Cause extent to be updated on screen */
+   state.w = window_get_wimp_handle(0, view->object_id);
+   wimp_get_window_state(&state);
+   wimp_open_window((wimp_open *)&state);
+ }
+
+
+
+
+document* viewer_document(viewer* view)
+ { assert(viewer_debug_validate(view));
+
+   return view->doc;
+ }

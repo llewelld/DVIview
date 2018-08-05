@@ -1,0 +1,97 @@
+/*** tbx.h ***/
+/* Various toolbox utilities (as more utilities are added this may be split up)
+ * (c) Paul Field
+ * v1.00 - 18/9/1995
+ * v1.01 - 15/12/1995
+ *   Added tbx_shared_object_id(), tbx_gadget_faded_iff(),
+ *   tbx_gadget_set_string(), tbx_gadget_get_string()
+ * v1.02 - 1/5/1996
+ *   Added tbx_displayfield_set_number(), tbx_radioarray_get_value() and tbx_radioarray_set_value()
+ */
+
+#ifndef toolbox_H
+#include "toolbox.h"
+#endif
+
+#include <stddef.h>
+
+
+const char* tbx_task_name(void);
+ /* Exceptions: exception_NO_MEMORY
+  *
+  * Returns the name of the task.
+  * Similar to toolboxgetsysinfo_task_name() except it sorts out
+  * the required buffer for you. Note that memory is only allocated
+  * the first time this function is called.
+  */
+
+
+toolbox_o tbx_shared_object_id(const char* name);
+ /* Pre: 'name' refers to an object that is marked as 'shared'.
+  * Exceptions: os
+  *
+  * Returns the id of the object created from the template 'name'
+  * in the resources file. The routine will create the object
+  * if it hasn't already been created.
+  *
+  * You should use this routine rather than toolbox_create_object()
+  * because, in debugging mode, it verifies that the object is
+  * shared (and it's very easy to forget to set an object's shared
+  * flag when using ResEd).
+  */
+
+
+void tbx_gadget_faded_iff(toolbox_o window, toolbox_c gadget, bool faded);
+ /* Alters whether the specified gadget is faded or not.
+  *
+  * By the way 'iff' means 'if and only if'. Rather than the traditional
+  * 'imperative' way of reading C as commands, you should read this function
+  * as a constraint that is enforced when it occurs.
+  * For example:
+  *    tbx_gadget_faded_iff(window, name_writable, name_option_is_off);
+  * might be read as "Enforce the contraint that: the 'name' writable icon is
+  * faded when the 'name' option button isn't ticked and unfaded when it is ticked".
+  */
+
+
+void tbx_gadget_set_string(toolbox_o window, toolbox_c gadget, const char* string);
+ /* Pre: string != NULL
+  *      gadget contains a string. i.e. it is a display field, writable field or string set
+  *
+  * Sets the gadget's string.
+  */
+
+
+void tbx_gadget_get_string(toolbox_o window, toolbox_c gadget, char* string, size_t size);
+ /* Pre: string != NULL
+  *      gadget contains a string. i.e. it is a display field, writable field or string set
+  *
+  * Reads the string from the gadget into 'string' where 'size' is size of the buffer
+  */
+
+
+void tbx_displayfield_set_number(toolbox_o window, toolbox_c gadget, int value);
+ /* Pre: gadget is a display field
+  *
+  * Shows value in the display field
+  */
+
+
+unsigned tbx_radioarray_get_value(toolbox_o window, toolbox_c gadget);
+ /* A radioarray is some consecutively-numbered radio button gadgets identified
+  * by the smallest component id of its members. The radio buttons must all be in the
+  * same radio button group and all buttons in that group must be part of the radioarray.
+  * The radioarray's value is the index of the button that is on. 0 is the index
+  * of the button with the smallest component id.
+  *
+  * Pre: gadget identifies a radioarray
+  *
+  * Returns the value of the radioarray
+  */
+
+
+void tbx_radioarray_set_value(toolbox_o window, toolbox_c gadget, unsigned value);
+ /* Pre: gadget identifies a radioarray
+  *
+  * Returns the value of the radioarray
+  */

@@ -1,0 +1,72 @@
+/*** error.h ***/
+/* error reporting (via wimp_report_error)
+ * (c) Paul Field
+ * v1.00 - 5/9/1995
+ * v1.01 - 18/9/1995 - improved robustness / error_report_signal() allows user to exit program
+ * v1.02 - 11/4/1996 - added error_report_string() and error_from_string()
+ * v1.03 - 23/5/1996 - added error_report_information()
+ */
+
+#include "exception.h"
+
+
+void error_report_exception(const exception* e);
+ /* Pre: e != NULL
+  *
+  * Calls the appropriate error_report_XXX routine depending
+  * on the type of the exception
+  */
+
+
+void error_report_os(const os_error* error);
+ /* Pre: error != NULL
+  *
+  * Reports the error
+  */
+
+
+void error_report_user(unsigned error_id);
+ /* Looks up the message Err<error_id>, where error_id is
+  * turned into a five digit hex number, and reports it.
+  */
+
+
+void error_report_string(const char* string);
+ /* Pre: string != NULL
+  *
+  * Reports string as an error.
+  */
+
+
+void error_report_signal(unsigned signal_id);
+ /* Looks up the message Sig<signal_id>, where signal_id is
+  * turned into a one digit hex number, substitutes it into
+  * the message SigQuery and reports it.
+  * The user is given the option of quitting the program in
+  * which case exit() is called.
+  */
+
+
+os_error* error_from_string(const char* string);
+ /* Pre: string != NULL
+  *
+  * Returns an os_error formed from string
+  * The value returned is valid until the next call to this function.
+  */
+
+
+bool error_query(const os_error* error);
+ /* Pre: error != NULL
+  *
+  * Reports the error in a window with OK and CANCEL buttons.
+  * Returns TRUE if the user clicked on OK, FALSE if CANCEL.
+  */
+
+
+void error_report_information(const char* information);
+ /* Pre: information != NULL
+  *
+  * Reports information using an information report.
+  * (Misses off the "Error from" in the title; uses
+  * an information report under RISC OS 3.5+).
+  */

@@ -1,0 +1,165 @@
+/**** render_list.h ****/
+/* Maintains a list of which system fonts should be used to render which TeX fonts
+ * (c) Paul Field
+ */
+
+#include "render_list.h"
+
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "allocate.h"
+#include "ci_string.h"
+#include "exception.h"
+#include "list.h"
+#include "message.h"
+
+
+
+
+static list* render_list;
+
+typedef struct render_pair_str
+ { char* font_name;
+   char* render_name;
+ }render_pair;
+
+
+
+#ifndef NDEBUG
+static bool constructed = FALSE;
+#endif
+
+
+
+
+bool render_list_find(const char* font_name, const char** render_font)
+ { list_ptr lptr;
+
+   assert(constructed);
+   assert(font_name != NULL);
+   assert(render_font != NULL);
+
+   for (lptr = list_ptr_head(render_list); !list_ptr_past_the_end(lptr); list_ptr_inc(&lptr))
+    { render_pair* r;
+
+      r = list_ptr_element(lptr);
+      if (case_insensitive_strcmp(font_name, r->font_name) == 0)
+       { *render_font = r->render_name;
+         return TRUE;
+       }
+    }
+
+   return FALSE;
+ }
+
+
+
+
+static void read_package_substitutions(const char* package_dir)
+ { char  render_file_name[os_FILE_NAME_LIMIT];
+   FILE* render_file;
+
+   if (os_FILE_NAME_LIMIT - strlen("RO_Render") <= strlen(package_dir))
+    { throw_string(message_lookup_and_substitute("PackageTooLong", package_dir, 0,0,0));
+    }
+
+   strcpy(render_file_name, package_dir);
+   strcat(render_file_name, "RO_Render");
+
+   render_file = fopen(render_file_name, "r");
+   if (render_file)
+    { try
+       { char buffer[80];
+
+         while(!feof(render_file) && !ferror(render_file))
+          { if (fgets(buffer, 80, render_file) != NULL)
+             { char font_name[80];
+               char render_name[80];
+
+               if (sscanf(buffer, "%s %s", font_name, render_name) == 2)
+                { render_pair* r;
+
+                  r = list_alloc_element(sizeof(render_pair));
+                  r->font_name   = NULL;
+                  r->render_name = NULL;
+
+                  list_cons(render_list, r);
+
+                  r->font_name = memory_allocate(strlen(font_name)+1);
+                  strcpy(r->font_name, font_name);
+
+                  r->render_name = memory_allocate(strlen(render_name)+1);
+                  strcpy(r->render_name, render_name);
+                }
+             }
+          }
+       }
+      catch
+       { fclose(render_file);
+         throw();
+       }
+      catch_end
+
+      fclose(render_file);
+    }
+ }
+
+
+
+
+void render_list_construct(void)
+ { char package_path[os_CLI_LIMIT];
+   char *path;
+
+   assert(!constructed);
+
+   render_list = list_create();
+
+#ifndef NDEBUG
+   constructed = TRUE;
+#endif
+
+   path = getenv("TeXFontsPackages$Path");
+   if (path != NULL)
+    { const char* package_dir;
+
+      strncpy(package_path, path, os_CLI_LIMIT-1);
+      package_path[os_CLI_LIMIT-1] = '\0';
+
+      package_dir = strtok(package_path, ",");
+      while(package_dir != NULL)
+       { read_package_substitutions(package_dir);
+         package_dir = strtok(NULL, ",");
+       }
+    }
+ }
+
+
+
+
+void render_list_destruct(void)
+ { assert(constructed);
+
+   /* Only destruct when MemCheck is in operation.
+    * Normally we rely on the OS to tidy up automatically (it's more efficient)
+    */
+#ifdef MemCheck_MEMCHECK
+   while(!list_is_empty(render_list))
+    { render_pair* r;
+
+      r = list_remove_head(render_list);
+      memory_free(r->font_name);
+      memory_free(r->render_name);
+      list_free_element(r);
+    }
+
+   list_destroy(render_list);
+#endif
+
+#ifndef NDEBUG
+   constructed = FALSE;
+#endif
+ }

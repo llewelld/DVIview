@@ -1,0 +1,142 @@
+/** dviops.h **/
+/* Provides an abstraction of the dvi commands:
+ *  1) converts parameters from byte codes into a 'parameter' structure
+ *  2) After the conversion of (1) many dvi commands become identical
+ *     and so this module provides about 23 commands instead
+ *     of the 250 'raw' commands
+ *
+ * (c) Paul Field 1995
+ * V1.00 - 11/1/1995
+ */
+
+/* Compiling with the macro 'DVIOPS_DEBUG' defined will produce
+ * code that outputs all commands to stderr as they are read.
+ * Compiling with 'NDEBUG' defined disables all debugging code
+ * including the DVIOPS_DEBUG facilities.
+ */
+
+#include "byte_stream.h"
+
+
+typedef struct parameters_rule
+ { int height, width;
+ }parameters_rule;
+
+typedef struct parameters_bop
+ { int count[10];
+   int pointer;
+ }parameters_bop;
+
+typedef struct parameters_font_def
+ { int   font_no;
+   int   checksum;
+   int   scale;
+   int   design_size;
+   char* area_name;  /* May be NULL */
+   char* font_name;
+ }parameters_font_def;
+
+typedef struct parameters_preamble
+ { int id;
+   int numerator;
+   int denominator;
+   int magnification;
+   /* char* comment;   Intentionally ommitted */
+ }parameters_preamble;
+
+typedef struct parameters_postamble
+ { int pointer;
+   int numerator;
+   int denominator;
+   int magnification;
+   int height;
+   int width;
+   int stack_depth;
+   int pages;
+ }parameters_postamble;
+
+typedef struct parameters_post_postamble
+ { int pointer;
+   int id;
+ }parameters_post_postamble;
+
+
+
+typedef union command_parameters
+ { int   character;
+   int   distance;
+   int   font_no;
+   char* string;
+   parameters_rule           rule;
+   parameters_bop            bop;
+   parameters_font_def       font_def;
+   parameters_preamble       preamble;
+   parameters_postamble      postamble;
+   parameters_post_postamble post_postamble;
+ }command_parameters;
+
+
+typedef enum command_code
+ { /* Command              Parameter member      Notes */
+   command_set,        /*  character             set_char_0 etc are converted to this */
+   command_set_rule,   /*  rule            */
+   command_put,        /*  character       */
+   command_put_rule,   /*  rule            */
+   command_nop,
+   command_bop,        /*  bop             */
+   command_eop,
+   command_push,
+   command_pop,
+   command_right,      /*  distance        */
+   command_w0,
+   command_w,          /*  distance        */
+   command_x0,
+   command_x,          /*  distance        */
+   command_down,       /*  distance        */
+   command_y0,
+   command_y,          /*  distance        */
+   command_z0,
+   command_z,          /*  distance        */
+   command_fnt,        /*  font_no               fnt_num_0 etc are converted to this */
+   command_xxx,        /*  string          */
+   command_fnt_def,    /*  font_def        */
+   command_pre,        /*  preamble        */
+   command_post,       /*  postamble       */
+   command_post_post   /*  post_postamble  */
+ }command_code;
+
+
+typedef struct command
+ { command_code       code;
+   command_parameters parameters;
+ }command;
+
+
+void dviops_read_command(byte_stream* stream, command* c);
+ /* Pre: stream != NULL
+  *      c points to a (undefined) command
+  * Exceptions: os exceptions
+  *
+  * Reads the command at the current position in stream and returns it in
+  * c and returns error_none.
+  * If the command could not be read an error code is returned, c and stream's pointer
+  * are undefined.
+  */
+
+
+void dviops_command_finished(command* c);
+ /* Pre: c != NULL
+  *
+  * Frees allocated memory in c. This should be called for all
+  * commands successfully read using dviops_read_command.
+  * After this call c->code is unchanged.
+  */
+
+
+void dviops_find_post_postamble(byte_stream* stream);
+ /* Pre: stream != NULL
+  * Exceptions: os exceptions
+  *
+  * Sets streams's file pointer so that a call to dviops_read_command() will
+  * return a command_post_post.
+  */

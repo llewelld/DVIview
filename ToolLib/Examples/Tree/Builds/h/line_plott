@@ -1,0 +1,19 @@
+/*** line_plotter.h ***/
+/* A line_processor that simply plots lines
+ * (c) Paul Field
+ * v1.00 - 21/11/95
+ */
+
+#include "line_processor.h"
+
+
+extern const line_processor line_plotter;
+
+
+/* Additional functions */
+
+void line_plotter_origin(int x, int y);
+ /* Set the origin of the line co-ordinate system to be the screen co-ordinate (x,y).
+  * Use this call before line_plotter.initialise().
+  */
+

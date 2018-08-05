@@ -1,0 +1,63 @@
+/** tfm.h **/
+/* Loads in and manages tfm files
+ * (c) Paul Field 1995
+ */
+
+
+#include "bool.h"
+
+
+typedef struct tfm_str tfm;
+
+tfm* tfm_read(const char* font_name);
+ /* Exceptions: exception_NO_MEMORY, os exceptions
+  *
+  * Creates a tfm data structure in metrics from the TFM file font_name.
+  */
+
+
+void tfm_destruct(tfm* metrics);
+ /* Frees the memory associated with metrics
+  * (metrics may be NULL)
+  */
+
+
+bool tfm_checksum_matches(const tfm* metrics, int checksum);
+ /* Pre: metrics != NULL
+  *
+  * Returns TRUE iff checksum and metrics' checksum match
+  */
+
+
+bool tfm_contains_char(const tfm* metrics, unsigned char c);
+ /* Pre: metrics != NULL
+  *
+  * Returns TRUE iff c is included in the metrics
+  */
+
+
+int tfm_char_width(const tfm* metrics, unsigned char c);
+ /* Pre: metrics != NULL
+  *      tfm_contains_char(metrics, c)
+  *
+  * Returns the width of the character c (in design size units x 2^20)
+  */
+
+
+void tfm_bounds(const tfm* metrics, const unsigned char* s, unsigned length, int* height, int* depth);
+ /* Pre: metrics != NULL
+  *      s is a string of length characters possibly including the null character
+  *      (0 is not treated as a terminator in this context)
+  *      for all 0 <= i < length : tfm_contains_char(metrics, s[i])
+  *
+  * Returns the maximum distance (in design size units x 2^20) that
+  * characters in s reach above and below the font baseline in height
+  * and depth respectively
+  */
+
+
+#ifndef NDEBUG
+void tfm_debug_output(const tfm* metrics);
+#else
+#define tfm_debug_output(m)
+#endif

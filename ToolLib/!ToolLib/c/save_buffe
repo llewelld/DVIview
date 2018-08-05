@@ -1,0 +1,205 @@
+/*** save_buffer.c ***/
+/* Provide an easy-to-use way of implementing type 3 saving
+ * (c) Paul Field
+ */
+
+#include "save_buffer.h"
+
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+#include <limits.h>
+
+#include "saveas.h"
+#include "osfile.h"
+#include "osfind.h"
+#include "osgbpb.h"
+
+#include "nevent.h"
+#include "allocate.h"
+#include "error.h"
+
+
+enum transfer_type
+ { transfer_file,
+   transfer_memory
+ };
+
+
+static struct
+ { enum transfer_type type;
+
+   /*** If output goes to a file ***/
+   const char* filename;
+   bits        file_type;
+   os_f        file;
+
+   /*** If output goes via memory ***/
+   byte*       buffer;
+   size_t     size;
+   size_t     free_offset;
+   toolbox_o  saveas;
+
+#ifndef NDEBUG
+   bool       active;
+#endif
+ }save_buffer;
+
+
+
+
+static void save_buffer_empty_buffer(bool terminate_save)
+ { saveas_buffer_filled(0, save_buffer.saveas, save_buffer.buffer, save_buffer.free_offset);
+   if (save_buffer.free_offset == save_buffer.size)
+    { /* Protocol is not finished - wait for next FillBuffer event and then process it */
+      wimp_block                 poll_block;
+      toolbox_action*            action = (toolbox_action*)&poll_block;
+      saveas_action_fill_buffer* fill_buffer = (saveas_action_fill_buffer*)action->data.reserved;
+      int                        event_code;
+      nevent_poll_controller     old_controller;
+
+      /* Enable saving of FP registers */
+      old_controller = nevent_force_poll_bits_set(wimp_SAVE_FP);
+
+      /* Wait for next FillBuffer event to arrive */
+      do
+       { event_code = nevent_poll(&poll_block, NULL);
+       }
+      while(event_code != toolbox_EVENT && action->action_no != action_SAVE_AS_FILL_BUFFER);
+
+      /* Reset FP register saving to what it was before this function was called */
+      nevent_set_poll_control(old_controller);
+
+      if (terminate_save)
+       { /* The receiver thinks there is more to come but there isn't - so send an empty block */
+         saveas_buffer_filled(0, save_buffer.saveas, save_buffer.buffer, 0);
+       }
+      else
+       { /* Application has requested a different sized buffer (!Zap does this)
+          * (but no point allocating it if the save is over :-) )
+          */
+         if (fill_buffer->size != save_buffer.size)
+          { save_buffer.buffer = memory_reallocate(save_buffer.buffer, fill_buffer->size);
+            save_buffer.size   = fill_buffer->size;
+          }
+       }
+    }
+   save_buffer.free_offset = 0;
+ }
+
+
+
+
+void save_buffer_create_for_file(const char* filename, bits file_type)
+ { assert(!save_buffer.active);
+   assert(filename);
+
+   save_buffer.file      = osfind_openout(osfind_NO_PATH, filename, NULL);
+   save_buffer.type      = transfer_file;
+   save_buffer.filename  = filename;
+   save_buffer.file_type = file_type;
+#ifndef NDEBUG
+   save_buffer.active = TRUE;
+   save_buffer.saveas = toolbox_NULL_OBJECT;
+#endif
+ }
+
+
+
+
+void save_buffer_create_for_memory(toolbox_o saveas, size_t buffer_size)
+ { assert(!save_buffer.active);
+   assert(buffer_size > 0);
+
+   save_buffer.buffer      = memory_allocate(buffer_size);
+   save_buffer.type        = transfer_memory;
+   save_buffer.size        = buffer_size;
+   save_buffer.free_offset = 0;
+   save_buffer.saveas      = saveas;
+
+#ifndef NDEBUG
+   save_buffer.active = TRUE;
+#endif
+ }
+
+
+
+
+void save_buffer_send(const void* vbytes, size_t bytes_to_send)
+ { const byte* bytes = vbytes;
+
+   assert(save_buffer.active);
+   assert(bytes);
+   assert(bytes_to_send < (unsigned)INT_MIN);  /* bytes_to_send was probably negative */
+
+   if (save_buffer.type == transfer_file)
+    { osgbpb_write(save_buffer.file, bytes, bytes_to_send);
+    }
+   else
+    { assert(save_buffer.type == transfer_memory);
+      while (bytes_to_send-- > 0)
+       { assert(save_buffer.free_offset <= save_buffer.size);
+         /* Send buffer if buffer is full */
+         if (save_buffer.free_offset >= save_buffer.size)
+          { save_buffer_empty_buffer(FALSE);
+          }
+
+         /* Store byte in buffer */
+         save_buffer.buffer[save_buffer.free_offset++] = *bytes++;
+       }
+    }
+ }
+
+
+
+
+
+void save_buffer_destroy(bool save_successful)
+ { assert(save_buffer.active);
+
+   if (save_buffer.type == transfer_file)
+    { osfind_close(save_buffer.file);
+       { if (save_successful)
+          { /* Set the file's file type
+             * (if the file didn't save OK it will be left as type 'data'
+             */
+            osfile_set_type(save_buffer.filename, save_buffer.file_type);
+          }
+       }
+    }
+   else
+    { assert(save_buffer.type == transfer_memory);
+
+      if (save_successful)
+       { save_buffer_empty_buffer(TRUE);
+       }
+      memory_free(save_buffer.buffer);
+    }
+
+#ifndef NDEBUG
+   save_buffer.active = FALSE;
+#endif
+ }
+
+
+
+
+void save_buffer_send_char(char c)
+ { save_buffer_send(&c, sizeof(c));
+ }
+
+
+
+
+void save_buffer_send_unsigned(unsigned u)
+ { save_buffer_send(&u, sizeof(u));
+ }
+
+
+
+
+void save_buffer_send_string(const char* string)
+ { assert(string != NULL);
+
+   save_buffer_send(string, strlen(string));
+ }

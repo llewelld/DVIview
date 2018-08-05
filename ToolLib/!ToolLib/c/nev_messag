@@ -1,0 +1,245 @@
+/*** nev_message.c ***/
+/* Handle Wimp messages.
+ * By Paul Field
+ */
+
+#include "nev_message.h"
+
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "allocate.h"
+#include "list.h"
+
+#include "nev_support.h"
+
+
+typedef struct message_handler_info
+ { unsigned               message_num;
+   nevent_message_handler handler;
+   void*                  handle;
+ }
+message_handler_info;
+
+
+static list* handler_list;
+
+
+#ifndef NDEBUG
+#include "set.h"
+
+static bool initialised = FALSE;
+static const wimp_message_list* all_messages;
+
+static set* message_set;
+
+
+static int compare_messages(const void* vnum1, const void* vnum2)
+ { bits num1 = *(const int *)vnum1;
+   bits num2 = *(const int *)vnum2;
+
+   if (num1 < num2)
+    { return -1;
+    }
+   if (num1 == num2)
+    { return 0;
+    }
+   return 1;
+ }
+
+
+
+
+static void output_message_set(void)
+ { set_ptr ptr;
+
+   fputs
+    ( "--------------------------\n"
+      "Messages for which handlers were registered:\n"
+      " {\n",
+      stderr
+    );
+
+   for (ptr = set_ptr_first(message_set); !set_ptr_past_the_end(ptr); set_ptr_inc(&ptr))
+    { bits message_num;
+
+      message_num = *(bits *)set_ptr_element(ptr);
+      if (message_num != nevent_ALL_MESSAGES && message_num != 0)
+       { fprintf(stderr,"   0x%x,\n", message_num);
+       }
+    }
+
+   fputs("   0\n };\n", stderr);
+ }
+
+
+
+
+static bool message_can_arrive(int message_no)
+ { if (all_messages == NULL)
+    { /* NULL means "no messages" except that message_QUIT is always returned */
+      return (message_no == message_QUIT);
+    }
+   else
+    { /* If the list only contains 0 then all messages are delivered */
+      if (all_messages->messages[0] == 0)
+       { return TRUE;
+       }
+      else
+       { /* Messages are explicitly listed - so look for our messages */
+         unsigned i     = 0;
+         bool     end   = FALSE;
+         bool     found = FALSE;
+
+         do
+          { end   = (all_messages->messages[i] == 0);
+            found = (all_messages->messages[i] == message_no);
+            i++;
+          }
+         while(!end && !found);
+
+         return found;
+       }
+    }
+ }
+
+
+
+
+static void check_message_is_delivered(int message_no)
+ { if (!message_can_arrive(message_no))
+    { fprintf
+       ( stderr,
+         "Message %x was not passed to nev_message_initialise() but a handler has been registered for it\n",
+          message_no
+       );
+    }
+ }
+#else
+/* Define 'null' function so no code is included when the production version is compiled */
+#define check_message_is_delivered(m)
+
+#endif
+
+
+
+
+static bool nevent_message_dispatch(wimp_event_no event_num, wimp_block* poll_block, toolbox_block* id_block)
+ { NOT_USED(id_block);
+
+   if (event_num == wimp_USER_MESSAGE || event_num == wimp_USER_MESSAGE_RECORDED)
+    { list_ptr ptr;
+
+      assert(initialised);
+      assert(poll_block != NULL);
+
+      for (ptr = list_ptr_head(handler_list); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+       { const message_handler_info* handler_info;
+
+         handler_info = list_ptr_element(ptr);
+         if
+          (handler_info->message_num == nevent_ALL_MESSAGES ||
+           handler_info->message_num == poll_block->message.action
+          )
+          { if (handler_info->handler(&poll_block->message, handler_info->handle))
+             { return TRUE;
+             }
+          }
+       }
+      return TRUE;
+    }
+   return FALSE;
+ }
+
+
+
+
+void nevent_message_register_handler(bits message_num, nevent_message_handler handler, void* handle)
+ { message_handler_info* handler_info;
+
+   assert(initialised);
+   assert(handler != NULL);
+   check_message_is_delivered(message_num);
+#ifndef NDEBUG
+   set_insert(message_set, &message_num);
+#endif
+
+   handler_info = list_alloc_element(sizeof(message_handler_info));
+   handler_info->message_num = message_num;
+   handler_info->handler     = handler;
+   handler_info->handle      = handle;
+   list_cons(handler_list, handler_info);
+ }
+
+
+
+
+void nevent_message_deregister_handler(bits message_num, nevent_message_handler handler, void* handle)
+ { message_handler_info* handler_info;
+
+   assert(initialised);
+   assert(handler != NULL);
+
+#ifndef NDEBUG
+   if (list_is_empty(handler_list))
+    { fprintf
+       ( stderr,
+         "Error: Unable to deregister nevent_wimp_message_handler %p for message %x with handle %p\n",
+         handler,
+         message_num,
+         handle
+       );
+      return;
+    }
+#endif
+
+   handler_info = list_remove_head(handler_list);
+   if
+    ( handler_info->message_num == message_num &&
+      handler_info->handler     == handler     &&
+      handler_info->handle      == handle
+    )
+    { list_free_element(handler_info);
+    }
+   else
+    { nevent_message_deregister_handler(message_num, handler, handle);
+      list_cons(handler_list, handler_info);
+    }
+ }
+
+
+
+
+#ifndef NDEBUG
+/* Clear up memory used - only needed in debug code, because OS does it automatically
+ * but tidying up stop memory leak checkers (e.g. MemCheck) from listing all the
+ * memory we used
+ */
+static void tidy_up(void)
+ { list_destroy(handler_list);
+   set_destroy(message_set);
+ }
+#endif
+
+
+
+
+void nevent_message_initialise(const wimp_message_list* messages)
+ { assert(!initialised);
+
+   handler_list = list_create();
+   nevent_support_register_dispatcher(nevent_message_dispatch);
+
+#ifndef NDEBUG
+   initialised = TRUE;
+   all_messages = messages;
+   message_set = set_create(compare_messages, NULL, sizeof(bits));
+
+   /* N.B. atexit handlers called in reverse order of registration */
+   atexit(tidy_up);
+   atexit(output_message_set);
+#else
+   NOT_USED(messages);
+#endif
+ }

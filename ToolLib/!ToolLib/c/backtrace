@@ -1,0 +1,92 @@
+/*** backtrace.c ***/
+/* Generate a stack backtrace
+ * (c) Paul Field 1995
+ * Based closely on code by Tom Hughes
+ */
+
+#include "backtrace.h"
+
+#include <assert.h>
+#include <stdio.h>
+#include "backtr_sup.h"
+#include "debug_io.h"
+
+#ifdef MemCheck_MEMCHECK
+#include "MemCheck:MemCheck.h"
+#endif
+
+
+/* PCMask masks out status and mode bits to give a 26 bit program counter */
+/* (We're assuming the 26-bit PC APCS variant. The alternative is the 32-bit variant)
+ */
+#define Mask26Bits ((1u<<26)-1)
+#define PCMask (Mask26Bits & ~3)
+
+
+/* The save code pointer points 3 words beyond the instruction that
+ * created the stack frame
+ */
+#define SaveCodePointerOffset 3
+
+
+/* We need to search back from the instruction that created a frame until we
+ * find the name information word. NameInfoSearchWordLimit is the maximum number
+ * of words that we should search through
+ */
+#define NameInfoSearchWordLimit 4
+
+
+/* The following information is stored after the function name */
+typedef struct
+ { unsigned length:24;   /* Number of bytes used to store function name (includes 0 padding) */
+   unsigned ff_code:8;   /* Should be 0xff if there is a function name before this information */
+ }function_name_info;
+
+
+
+
+void backtrace(void)
+ { _kernel_unwindblock frame;
+   char*               language;
+
+#ifdef MemCheck_MEMCHECK
+   MemCheck_SetReadChecking(0);
+#endif
+
+   fputs("Stack Dump:\n", stderr);
+
+   backtrace_support_current_frame(&frame);
+   while(_kernel_unwind(&frame, &language) > 0)
+    { function_name_info* name_info;
+      unsigned*           save_code_pointer;
+      unsigned*           frame_create_instruction;
+      unsigned*           fp;
+      unsigned            test_words;
+
+      fp = (unsigned*)(frame.fp & PCMask);
+      if (fp != NULL)
+       { save_code_pointer = (unsigned*)(*fp & PCMask);
+         frame_create_instruction = save_code_pointer - SaveCodePointerOffset;
+
+         /* Search backwards from the frame creation instruction looking for a 'name info' word */
+         name_info = (function_name_info*)(frame_create_instruction-1);
+         for (test_words = NameInfoSearchWordLimit; name_info->ff_code != 0xff && test_words > 0; test_words--)
+          { name_info--;
+          }
+
+         /* If we found the name info word we can print the name, otherwise the function is anonymous */
+         if (name_info->ff_code == 0xff)
+          { fputs((char*)name_info - name_info->length, stderr);
+            fputc('\n', stderr);
+          }
+         else
+          { fputs("<anonymous function>\n", stderr);
+          }
+       }
+    }
+
+   debug_io_flush();
+#ifdef MemCheck_MEMCHECK
+   MemCheck_SetReadChecking(1);
+#endif
+ }

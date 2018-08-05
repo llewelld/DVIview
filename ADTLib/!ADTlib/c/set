@@ -1,0 +1,290 @@
+/*** set.c ***/
+/* Abstract data type :
+ *   Simple set
+ * (c) Paul Field
+ * V1.00 - 12/7/1995
+ */
+
+#include "set.h"
+
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+#include "list.h"
+
+
+/* A set is implemented by a sorted list, elements are stored in ascending order */
+
+struct set_str
+ { list        *set_list;
+   compare_fn  compare;
+   sizeof_fn   size_of;
+   size_t      size;
+#ifndef NDEBUG
+   const void *set_active;    /* Used by debugging code to flag that this set has not been destroyed */
+#endif
+ };
+
+#define object_size(s,o) ((s)->size_of ? (s)->size_of(o) : (s)->size)
+#define object_compare(s,o1,o2)  ((s)->compare ? (s)->compare(o1, o2) : memcmp(o1, o2, (s)->size))
+
+
+
+#ifdef NDEBUG
+/* No debugging */
+#define sdbg_stats()
+#define sdbg_note_set_created(s)
+#define sdbg_note_set_destroyed(s)
+#define sdbg_error(f,e)
+#define sdbg_check_set_is_valid(s,f)
+
+#else
+#include <stdio.h>
+  static int           set_active_magic;     /* A magic value to indicate a set is active (i.e. not destroyed) */
+  static int           set_not_active_magic; /* A magic value to indicate a set is not active (i.e. has been destroyed) */
+  static unsigned sets = 0;             /* Number of set_create() - number of set_destroy() */
+  static bool exit_registered = FALSE;   /* TRUE once sdbg_stats has been registered with atexit() */
+
+  static void sdbg_stats(void);
+   /* If there are set still allocated, this outputs the number of each
+    */
+
+  static void sdbg_note_set_created(set *s);
+   /* Notes that a list has been created. (Also installs qbg_stats
+    * to be called when the program exits, if it hasn't been installed already)
+    */
+
+  static void sdbg_note_set_destroyed(set *s);
+   /* Notes that a set is about to be destroyed
+    */
+
+  static void sdbg_error(const char *function, const char *error);
+   /* Reports an error that occured in function and then aborts
+    */
+
+  static void sdbg_check_set_is_valid(const set *s, const char *function);
+   /* Checks that s is a valid set.
+    * If there is some problem with it and error is generated and abort() is called
+    */
+
+
+  static void sdbg_stats(void)
+   { if (sets != 0)
+      { fprintf(stderr, "Number of set not destroyed = %u (These will appear as lists not destroyed too)\n", sets);
+      }
+   }
+
+  static void sdbg_note_set_created(set *s)
+   { if (!exit_registered)
+      { exit_registered = TRUE;
+        atexit(sdbg_stats);
+      }
+     sets++;
+     s->set_active = &set_active_magic;
+   }
+
+  static void sdbg_note_set_destroyed(set *s)
+   { assert(sets > 0);
+     sets--;
+     s->set_active = &set_not_active_magic;
+   }
+
+  static void sdbg_error(const char *function, const char *error)
+   { assert(function != NULL);
+     assert(error != NULL);
+
+     fputs(function, stderr);
+     fputs(": ",stderr);
+     fputs(error, stderr);
+     fputc('\n', stderr);
+     abort();
+   }
+
+  static void sdbg_check_set_is_valid(const set *s, const char *function)
+   { if (s == NULL)
+      { sdbg_error(function, "NULL has been passed as set parameter");
+      }
+     if (s->set_active == &set_not_active_magic)
+      { sdbg_error(function, "The set has been destroyed - you can no longer use it");
+      }
+     if (s->set_active != &set_active_magic)
+      { sdbg_error(function, "The set parameter has not been created or is corrupt (or may have been destroyed)");
+      }
+
+     assert((s->size_of == NULL && s->size != 0) || (s->size_of != NULL && s->size == 0));
+     assert(s->compare != NULL || (s->compare == NULL && s->size_of == NULL));
+
+     if (list_length(s->set_list) > 1)
+      { unsigned n;
+        for (n = 1; n+1 <= list_length(s->set_list); n++)
+         { void *e1, *e2;
+           int compare_result;
+
+           e1 = list_nth_element(s->set_list, n);
+           e2 = list_nth_element(s->set_list, n+1);
+           compare_result = s->compare ? s->compare(e1,e2) : memcmp(e1,e2,s->size);
+           if (compare_result == 0)
+            { sdbg_error(function, "Identical elements in the set");
+            }
+           if (compare_result > 0)
+            { sdbg_error(function, "Internal ordering of set elements is not correct");
+            }
+         }
+      }
+   }
+
+#endif
+
+
+
+
+
+bool set_create(set **s_ptr, compare_fn compare, sizeof_fn size_of, size_t size)
+ { set *s;
+
+   assert(s_ptr);
+   assert((size_of == NULL && size != 0) || (size_of != NULL && size == 0));
+   assert(compare != NULL || (compare == NULL && size_of == NULL));
+
+   s = malloc(sizeof(struct set_str));
+   if (s)
+    { if (list_create(&s->set_list))
+       { s->compare = compare;
+         s->size_of = size_of;
+         s->size    = size;
+         sdbg_note_set_created(s);
+         *s_ptr = s;
+         return TRUE;
+       }
+      free(s);
+    }
+   return FALSE;
+ }
+
+
+
+void set_destroy(set *s)
+ { sdbg_check_set_is_valid(s,"set_destroy");
+   sdbg_note_set_destroyed(s);
+   list_destroy(s->set_list);
+   free(s);
+ }
+
+
+
+static bool set_add_object(set *s, const void *o)
+ { void *new_o;
+   size_t o_size;
+
+   o_size = object_size(s,o);
+   new_o = list_alloc_element(o_size);
+   if (new_o)
+    { memcpy(new_o, o, o_size);
+      list_cons(s->set_list, new_o);
+      return TRUE;
+    }
+   return FALSE;
+ }
+
+
+bool set_insert(set *s, const void *o)
+ { void *set_obj;
+   int compare_result;
+
+   sdbg_check_set_is_valid(s,"set_insert");
+
+   /** No objects in set so add object **/
+   if (list_is_empty(s->set_list))
+    { set_add_object(s, o);
+      return TRUE;
+    }
+
+   /** Compare first object in set_list with o **/
+   set_obj = list_remove_head(s->set_list);
+   compare_result = object_compare(s,o,set_obj);
+
+   if (compare_result < 0)
+    { /** Because set_list is ordered, set_obj and all further elements will be > o so we add o **/
+      list_cons(s->set_list, set_obj);
+      return set_add_object(s, o);
+    }
+   if (compare_result > 0)
+    { /** Object isn't equal to set_obj so check o against the remaining set objects **/
+      bool result = set_insert(s, o);
+      list_cons(s->set_list, set_obj);
+      return result;
+    }
+   assert(compare_result == 0);
+   /** Object is in the set already - no need to add o, just exit **/
+   list_cons(s->set_list, set_obj);
+   return TRUE;
+ }
+
+
+void set_remove(set *s, const void *o)
+ { void *set_obj;
+   int compare_result;
+
+   sdbg_check_set_is_valid(s, "set_remove");
+
+   /** No objects in set **/
+   if (list_is_empty(s->set_list))
+    { return;
+    }
+
+   /** Compare first object in set_list with o **/
+   set_obj = list_remove_head(s->set_list);
+   compare_result = object_compare(s,o,set_obj);
+
+   if (compare_result < 0)
+    { /** Because set_list is ordered, set_obj and all further elements will be > o so there's no match **/
+      list_cons(s->set_list, set_obj);
+      return;
+    }
+   if (compare_result > 0)
+    { /** Object isn't equal to set_obj so check o against the remaining set objects **/
+      set_remove(s, o);
+      list_cons(s->set_list, set_obj);
+      return;
+    }
+   assert(compare_result == 0);
+   /** Match found - free the memory **/
+   list_free_element(set_obj);
+ }
+
+
+void *set_contains(const set *s, const void *o)
+ { unsigned n;
+
+   sdbg_check_set_is_valid(s, "set_contains");
+
+   for (n = 1; n <= list_length(s->set_list); n++)
+    { void *set_obj = list_nth_element(s->set_list,n);
+      int compare_result = object_compare(s,o,set_obj);
+
+      if (compare_result < 0)
+       { /** Because set_list is ordered, set_obj and all further elements will be > o so there's no match **/
+         return NULL;
+       }
+      if (compare_result == 0)
+       { /** Match found **/
+         return set_obj;
+       }
+    }
+   /** All elements checked - no match **/
+   return NULL;
+ }
+
+
+
+
+unsigned set_elements(const set *s)
+ { sdbg_check_set_is_valid(s,"set_elements");
+   return list_length(s->set_list);
+ }
+
+
+void *set_nth_element(const set *s, unsigned n)
+ { sdbg_check_set_is_valid(s,"set_nth_element");
+   return list_nth_element(s->set_list, n);
+ }

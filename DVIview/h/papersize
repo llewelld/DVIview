@@ -1,0 +1,56 @@
+/**** papersize.h ****/
+/* Deals with paper sizes (No surely not...)
+ * and the paper menu
+ * (c) Paul Field
+ */
+
+#include "bool.h"
+
+typedef struct paper_size_str paper_size;
+
+typedef struct
+ { paper_size* paper;
+ } papersize_action_size_changed;
+
+
+enum
+ { Ev_PaperMenuFill   = 0x410,   /* Catch to tick menu entries */
+   Ev_PaperMenuSelect = 0x411,   /* Catch to alter your paper size */
+   Ev_PaperMenuHide   = 0x412,   /* Catch to untick menu entries */
+
+   Ev_PaperSizeChanged = 0x420   /* Issued when paper size changes */
+ };
+
+
+
+void papersize_init(void);
+ /* Initialises the paper size menu and editing dialogue
+  * This must be called before the PaperMenu toolbox object is
+  * created
+  */
+
+paper_size* papersize_closest(unsigned width, unsigned height, bool* landscape);
+ /* Returns a copy of the smallest paper_size that can contain
+  * a page of width x height (in millipoints) and sets landscape
+  * to TRUE if the paper_size should be used in landscape mode and
+  * FALSE otherwise. (The largest paper size is returned if no paper
+  * size can contain the page).
+  * You must call papersize_finished() for this paper size when you
+  * no longer need it. You may also wish to register an event handler
+  * to catch the toolbox event 'PaperSizeChanged' which occurs
+  * when the user edits a paper size.
+  */
+
+void papersize_size(const paper_size*, bool landscape, unsigned* width, unsigned* height);
+ /* Returns the width and height of the paper size in millipoints, swapping the returned values
+  * if landscape is TRUE
+  */
+
+paper_size* papersize_using(paper_size*);
+ /* Informs the module that one more copy of the paper size is being used.
+  * Returns the paper sized that was passed in
+  */
+
+void papersize_finished(paper_size*);
+ /* Informs the module that one less copy of the paper size is being used
+  */

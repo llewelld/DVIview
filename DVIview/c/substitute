@@ -1,0 +1,252 @@
+/**** substitute.c ****/
+/* Decides which system font to use to render a TeX font
+ * (c) Paul Field
+ */
+
+#include "substitute.h"
+
+#include <assert.h>
+#include <ctype.h>
+#include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "ci_string.h"
+#include "message.h"
+
+#include "font_summary.h"
+#include "log.h"
+#include "render_list.h"
+#include "sys_font_list.h"
+
+
+
+enum
+ { no_size = 0
+ };
+
+enum
+ { font_name_limit = 15
+ };
+
+#define default_font "cmr10"
+
+
+
+
+static void get_font_family(const char* font_name, char* family_name)
+ { unsigned    family_name_length;
+   const char* digit_ptr;
+
+   /* Skip over any digits at the end of the font name */
+   for (digit_ptr = font_name + strlen(font_name) - 1; digit_ptr > font_name && isdigit(*digit_ptr); digit_ptr--)
+    {}
+
+   family_name_length = digit_ptr - font_name + 1;
+   strncpy(family_name, font_name, family_name_length);
+ }
+
+
+
+
+static unsigned get_font_size(const char* font_name)
+ { unsigned    multiplier;
+   const char* digit_ptr;
+   unsigned    size;
+
+   multiplier = 1;
+   size = 0;
+   for (digit_ptr = font_name + strlen(font_name) - 1; digit_ptr > font_name && isdigit(*digit_ptr); digit_ptr--)
+    { size += ((*digit_ptr)-'0') * multiplier;
+      multiplier *= 10;
+    }
+
+   return size;
+ }
+
+
+
+
+static const char* get_sys_font_name(const char* font_name)
+ { static char sys_font_name[font_name_limit];
+
+   assert(strlen(font_name) + strlen(substitute_tex_font_prefix) + 1 < font_name_limit);
+
+   strcpy(sys_font_name, substitute_tex_font_prefix);
+   strcat(sys_font_name, font_name);
+
+   return sys_font_name;
+ }
+
+
+
+
+static const char* get_font_name(const char* family_name, unsigned size)
+ { static char font_name[font_name_limit];
+
+   if (size == no_size)
+    { strcpy(font_name, family_name);
+    }
+   else
+    { sprintf(font_name, "%s%u", family_name, size);
+    }
+
+   return font_name;
+ }
+
+
+
+
+static double calculate_aspect_ratio(const char* error_source, const char* font_name, const char* subs_font_name)
+ { double font_width;
+   double subs_font_width;
+
+   if (font_summary_width(font_name, &font_width))
+    { if (font_summary_width(subs_font_name, &subs_font_width))
+       { return font_width/subs_font_width;
+       }
+      else
+       { log_add_message(error_source, message_lookup_and_substitute("NoSummary2", subs_font_name, font_name, 0, 0));
+       }
+    }
+   else
+    { log_add_message(error_source, message_lookup_and_substitute("NoSummary", font_name, 0, 0, 0));
+    }
+
+   return 1.0;
+ }
+
+
+
+
+static bool find_closest(const char* family, unsigned size, unsigned* closest_size)
+ { list_ptr    lptr;
+   bool        found_any;
+   unsigned    smallest_difference;
+
+   assert(family != NULL);
+   assert(size != no_size);
+   assert(closest_size != NULL);
+
+   found_any = FALSE;
+   smallest_difference = UINT_MAX;
+
+   for (lptr = sys_font_list_head(); !list_ptr_past_the_end(lptr); list_ptr_inc(&lptr))
+    { const char* sys_prefixed_font_name;
+
+      sys_prefixed_font_name = list_ptr_element(lptr);
+
+      if (case_insensitive_strncmp(substitute_tex_font_prefix, sys_prefixed_font_name, strlen(substitute_tex_font_prefix)) == 0)
+       { const char* sys_font_name;
+         char        sys_family[font_name_limit];
+
+         sys_font_name = sys_prefixed_font_name + strlen(substitute_tex_font_prefix);
+         get_font_family(sys_font_name, sys_family);
+
+         if (case_insensitive_strcmp(family, sys_family) == 0)
+          { unsigned sys_font_size;
+            unsigned difference;
+
+            sys_font_size = get_font_size(sys_font_name);
+            difference = abs((int)sys_font_size - (int)size);
+
+            if (difference < smallest_difference)
+             { found_any = TRUE;
+               smallest_difference = difference;
+               *closest_size = sys_font_size;
+             }
+          }
+       }
+    }
+
+   return found_any;
+ }
+
+
+
+
+static const char* really_substitute(const char* error_source, const char* font_name, char* new_name, double* aspect_ratio)
+ { static char family_name[font_name_limit];
+   unsigned    size;
+   const char* render_font;
+
+   /* If the font name has a size component, try to find the closest size font */
+   get_font_family(font_name, family_name);
+   size = get_font_size(font_name);
+   if (size != no_size)
+    { unsigned closest_size;
+
+      if (find_closest(family_name, size, &closest_size))
+       { const char* subs_font_name;
+
+         subs_font_name = get_font_name(family_name, closest_size);
+         strcpy(new_name, subs_font_name);
+         *aspect_ratio = calculate_aspect_ratio(error_source, font_name, subs_font_name);
+         return get_sys_font_name(subs_font_name);
+       }
+    }
+
+   /* Not found yet? */
+   /* See if the user has specified a font for rendering */
+   if (render_list_find(font_name, &render_font) && sys_font_list_contains(render_font))
+    { strcpy(new_name, font_name);
+      *aspect_ratio = 1.0;
+
+      log_add_message(error_source, message_lookup_and_substitute("Substituted", font_name, render_font, 0, 0));
+
+      return render_font;
+    }
+
+
+   /* If all else fails, use the default font */
+   *aspect_ratio = calculate_aspect_ratio(error_source, font_name, default_font);
+   strcpy(new_name, default_font);
+   return get_sys_font_name(default_font);
+ }
+
+
+
+
+void substitute
+ ( const char* error_source,
+   const char* font_name,
+   const char** new_font_name,
+   const char** system_font,
+   double* aspect_ratio
+ )
+ { const char* sys_font_name;
+   static char new_name[font_name_limit];
+
+   assert(font_name != NULL);
+   assert(new_font_name != NULL);
+   assert(system_font != NULL);
+   assert(aspect_ratio != NULL);
+   assert(strlen(font_name) > 0);
+
+   if (font_name_limit < strlen(font_name) + strlen(substitute_tex_font_prefix) + 1)
+    { /* ERROR */
+    }
+
+
+   /* If TeX.<font_name> exists use it */
+   sys_font_name = get_sys_font_name(font_name);
+   if (sys_font_list_contains(sys_font_name))
+    { strcpy(new_name, font_name);
+      *new_font_name = new_name;
+      *system_font   = sys_font_name;
+      *aspect_ratio  = 1.0;
+      return;
+    }
+
+
+   /* We need to find an alternative system font */
+   sys_font_name = really_substitute(error_source, font_name, new_name, aspect_ratio);
+
+   if (case_insensitive_strcmp(font_name, new_name) != 0)
+    { log_add_message(error_source, message_lookup_and_substitute("Substituted", font_name, new_name, 0, 0));
+    }
+
+   *new_font_name = new_name;
+   *system_font   = sys_font_name;
+ }

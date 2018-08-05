@@ -1,0 +1,122 @@
+/*** line_storer.c ***/
+/* A line_processor that stores lines
+ * (c) Paul Field
+ * v1.00 - 21/11/95
+ * v1.01 - 24/11/95 : Altered to use shifting memory manager
+ */
+
+#include "line_storer.h"
+
+#include <assert.h>
+#include "shifting.h"
+
+
+/* A structure used to store line information */
+typedef struct line_str
+ { colour c;
+   int    x0,y0;
+   int    x1,y1;
+ }line;
+
+
+/* The line store - a variable-length array */
+static unsigned num_lines;            /* number of lines in the store */
+static unsigned line_store_limit;     /* number of lines that can be placed in the store */
+static line     *line_store = NULL;   /* pointer to the store (an array) */
+
+
+/* The store is extended in 'blocks' containing 'line_store_block_size' lines */
+enum { line_store_block_size = 1000 };
+
+
+
+static void line_storer_set_store_size(unsigned new_limit)
+ { line_store_limit = new_limit;
+
+   if (line_store == NULL)
+    { shifting_allocate((shifting_ptr)&line_store, line_store_limit * sizeof(line));
+    }
+   else
+    { shifting_alter_size((shifting_ptr)&line_store, line_store_limit * sizeof(line));
+    }
+ }
+
+
+
+
+static void line_storer_initialise(void)
+ { num_lines = 0;
+
+   line_storer_set_store_size(line_store_block_size);
+ }
+
+
+
+
+static void line_storer_add_line(colour c, int x0, int y0, int x1, int y1)
+ { line *new_line;
+
+   if (num_lines == line_store_limit)
+    { /* Extend the line store */
+      line_storer_set_store_size(line_store_limit + line_store_block_size);
+    }
+
+   /* Add the line to the line store */
+   new_line = &line_store[num_lines++];
+   new_line->c  = c;
+   new_line->x0 = x0;
+   new_line->y0 = y0;
+   new_line->x1 = x1;
+   new_line->y1 = y1;
+ }
+
+
+
+
+static void line_storer_finished(void)
+ {}
+
+
+
+
+unsigned line_storer_num_lines(void)
+ { return num_lines;
+ }
+
+
+
+
+void line_storer_get_line(unsigned index, colour *c, int *x0, int *y0, int *x1, int *y1)
+ { line *l;
+
+   assert(index < line_storer_num_lines());
+
+   l = &line_store[index];
+   *c  = l->c;
+   *x0 = l->x0;
+   *y0 = l->y0;
+   *x1 = l->x1;
+   *y1 = l->y1;
+ }
+
+
+
+
+void line_storer_process_lines(const line_processor *lines)
+ { unsigned line_idx;
+
+   assert(lines != &line_storer);
+
+   lines->initialise();
+   for (line_idx = 0; line_idx < num_lines; line_idx++)
+    { line *l;
+
+      l = &line_store[line_idx];
+      lines->add_line(l->c, l->x0, l->y0, l->x1, l->y1);
+    }
+   lines->finished();
+ }
+
+
+
+const line_processor line_storer = { line_storer_initialise, line_storer_add_line, line_storer_finished };

@@ -1,0 +1,37 @@
+Target = ^.o.$(LibName)
+
+ASMFlags  = $(ASMExtra) -Stamp -NoCache -CloseExec -Quit -throwback
+CCFlags   = $(CCExtra) -D__swi -fussy -fah -depend !Depend -throwback -I,@.^,C:
+CPPFlags  = $(CPPExtra) -depend !Depend -throwback -I,@.^,C:
+LinkFlags = $(LinkExtra)
+LibFileflags = -c -o
+
+ASM  = objasm $(ASMFlags)
+CC   = cc -c $(CCFlags)
+CPP  = Makatic._C++ c++ -c $(CPPFlags)
+LINK = Link -aif -c++ $(LinkFlags)
+LIBFILE = libfile -c
+
+
+
+# Don't alter anything below this...
+
+
+VPATH = @.^
+
+.SUFFIXES: .o .s .c .c++
+
+$(Target): $(ObjectFiles)
+           $(LibFile) -o $@ $(ObjectFiles)
+
+.s.o:
+           $(ASM) -from $< -to $@
+
+.c.o:
+           $(CC) -o $@ $<
+
+.c++.o:
+           $(CPP) -o $@ $<
+
+
+# Dynamic dependencies:

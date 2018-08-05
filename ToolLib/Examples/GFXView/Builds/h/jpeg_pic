@@ -1,0 +1,53 @@
+/*** jpeg_pic.h ***/
+/* Routines for loading and displaying a jpeg
+ * (c) Paul Field 1995
+ * v1.00 - 9/10/95
+ * v1.01 - 24/11/95 - added 'clip' parameter to jpeg_pic_draw()
+ */
+
+#ifndef os_H
+#include "os.h"
+#endif
+
+
+/* Opaque type */
+typedef struct jpeg_pic_str jpeg_pic;
+
+
+
+bool jpeg_pic_supported(void);
+ /* Returns TRUE if JPEG pictures are supported.
+  * JPEG support is not available on all platforms
+  */
+
+
+jpeg_pic *jpeg_pic_create(const char *file_name);
+ /* Pre: file_name is a jpeg file
+  * Exceptions: exception_NO_MEMORY, os (file errors)
+  * Creates a jpeg_pic from the file 'file_name' and returns it
+  */
+
+void jpeg_pic_destroy(jpeg_pic *pic);
+ /* Frees the memory associated with 'pic'
+  */
+
+void jpeg_pic_draw(const jpeg_pic *pic, int origin_x, int origin_y, unsigned scale_percent, const os_box *clip);
+ /* Pre: pic != NULL
+  *      We're drawing in the current Wimp mode
+  * Draws the jpeg_pic with it's bottom left corner at (origin_x, origin_y)
+  * scaled by 'scale_percent'%
+  * 'clip' should be the current graphics window
+  */
+
+void jpeg_pic_size(const jpeg_pic *pic, unsigned *width, unsigned *height);
+ /* Pre: pic != NULL
+  *      width != NULL
+  *      height != NULL
+  * Returns the width and height of the jpeg_pic in OS units
+  */
+
+unsigned jpeg_pic_suggested_scale(const jpeg_pic *pic);
+ /* Pre: pic != NULL
+  * Returns the scale (as a percentage) at which the picture will be displayed
+  * at 1 dot per pixel (in square pixel modes)
+  */

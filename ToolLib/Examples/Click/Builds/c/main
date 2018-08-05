@@ -1,0 +1,332 @@
+/*** Click ***/
+/* A demonstration of Toolbox programming using OSLib
+ * (c) Paul Field/Andrew Ellis 1995
+ *
+ * Shell application by Paul Field
+ * Window handling/object handling by Andrew Ellis
+ */
+
+/* Notes:
+ *
+ * OSLib refers to toolbox events as 'actions' and, for consistancy, we follow
+ * this convention.
+ *
+ * The NOT_USED(var) macro is used to supress a compiler warnings about 'var'
+ * being declared but not being used. This warning occurs when the Acorn compiler
+ * features "ah" are enabled. You should activate these features because they
+ * enable useful warnings which can indicate bugs in your program.
+ */
+
+#include <assert.h>
+#include <stddef.h>
+#include <stdio.h>
+
+#include "colourdbox.h"
+#include "colourtrans.h"
+#include "window.h"
+
+#include "allocate.h"
+#include "applicatio.h"
+#include "exception.h"
+#include "nev_toolbox.h"
+#include "nev_wimp.h"
+
+
+
+typedef enum
+ { CIRCLE,
+   SQUARE  /* Not supported yet */
+ } object_type;
+
+typedef struct
+ { object_type type;
+   os_colour colour;
+   int x, y;
+ } object;
+
+
+/* The size (e.g. radius, width) of our objects */
+#define OBJECTSIZE 32
+
+
+/* The maximum number of objects we can have in our window. If we exceed this
+ * number we won't add any more objects because we haven't allocated enough
+ * memory for our array. We could either 'return' and not do anything, report
+ * an error saying that we can't add any more objects or we could re-allocate
+ * the memory to allow for the extra objects. If we did this we could keep
+ * on adding objects until we ran out of memory
+ */
+#define MAXNUMOBJECTS 128
+
+
+/* When we check to see if an object overlaps a region of screen being
+ * redrawn, or request that a particular region be redrawn, we add in a
+ * small border around the object concerned for safety, to avoid numerical
+ * rounding errors which could otherwise results in small overlaps etc being
+ * missed. This is the width of that border strip in os graphics units.
+ */
+#define BORDER 8
+
+
+/* The number of objects current in our array of objects */
+static int num_objects;
+
+/* A pointer to the array of objects */
+static object *objects;
+
+/* This holds the currently selected colour */
+static os_colour current_colour;
+
+
+
+static void circle_fill(int x, int y, unsigned radius)
+ { os_plot(os_MOVE_TO, x, y);
+   os_plot(os_PLOT_CIRCLE + os_PLOT_BY, radius, 0);
+ }
+
+
+
+
+/* The following three routines are not yet used in this program */
+#if 0
+static void circle_outline(int x, int y, unsigned radius)
+ { os_plot(os_MOVE_TO, x, y);
+   os_plot(os_PLOT_CIRCLE_OUTLINE + os_PLOT_BY, radius, 0);
+ }
+
+
+
+
+static void rectangle_outline(int x, int y, unsigned width, unsigned height)
+ { os_plot(os_MOVE_TO, x, y);
+   os_plot(os_PLOT_SOLID + os_PLOT_BY, width, 0);
+   os_plot(os_PLOT_SOLID + os_PLOT_BY, 0, height);
+   os_plot(os_PLOT_SOLID + os_PLOT_BY, -width, 0);
+   os_plot(os_PLOT_SOLID + os_PLOT_BY, 0, -height);
+ }
+
+
+
+
+static void rectangle_fill(int x, int y, unsigned width, unsigned height)
+ { os_plot(os_MOVE_TO, x, y);
+   os_plot(os_PLOT_RECTANGLE + os_PLOT_BY, width, height);
+ }
+#endif
+
+
+
+
+static void force_redraw_object(const object *obj, toolbox_o viewer_id)
+/* This function forces the area of window where the object 'obj' is to be
+ * redrawn. If we didn't do this after adding obj, it wouldn't be displayed
+ * in the window until a redraw occured perhaps due to another window
+ * being dragged over the window.
+ */
+ { os_box box;
+
+   box.x0 = obj->x-OBJECTSIZE-BORDER;
+   box.x1 = obj->x+OBJECTSIZE+BORDER;
+   box.y0 = obj->y-OBJECTSIZE-BORDER;
+   box.y1 = obj->y+OBJECTSIZE+BORDER;
+
+   window_force_redraw(0,viewer_id,&box);
+ }
+
+
+
+
+
+static nevent_result object_set_colour(bits action_code, toolbox_action *action, toolbox_block *id_block, void *handle)
+/* This function is called when the user sets the colour which future objects will be */
+ {
+  /* There's a bug in OSLib v5.1: the colourdbox_action_colour_selected is not defined properly (it has an extra 'flags' field).
+   * To get around we 'bodge' the transformation from a toolbox_action to a colourdbox_action_colour_selected.
+   * The line we *should* use is:
+   *      colourdbox_action_colour_selected *colour_action = (colourdbox_action_colour_selected *)action->data.reserved;
+   */
+  colourdbox_action_colour_selected *colour_action = (colourdbox_action_colour_selected *)&action->flags;
+
+  /* This assert should fail if the program is compiled with a 'fixed' version of OSLib.
+   * When it fails, we can remove it and replace the 'bodge' above with the correct code
+   */
+  assert(offsetof(colourdbox_action_colour_selected, colour) == 4);
+
+  NOT_USED(handle);
+  NOT_USED(action_code);
+  NOT_USED(action);
+  NOT_USED(id_block);
+
+  current_colour = colour_action->colour;
+
+  return nevent_HANDLED;
+}
+
+
+
+
+static void draw_object(const object *obj, const unsigned origin_x, const unsigned origin_y)
+/* This function draws an object. (origin_x, origin_y) is where the origin of the window would appear
+ * on the screen (it might be a coordinate that is off of the edge of the screen)
+ */
+ { unsigned screen_x, screen_y;
+
+   /* Work out the x and y positions in the window */
+   screen_x = obj->x + origin_x;
+   screen_y = obj->y + origin_y;
+
+   colourtrans_set_gcol(obj->colour, 0, os_ACTION_OVERWRITE, NULL);
+
+   switch (obj->type)
+    { case CIRCLE:
+        circle_fill(screen_x, screen_y, OBJECTSIZE);
+        break;
+    }
+ }
+
+
+
+
+static nevent_result object_add_object_handler(wimp_event_no event_code, wimp_block *event, toolbox_block *id_block, void *handle)
+/* This function responds to mouse clicks and adds an object where the click occured */
+/* The type of object added depends on which button was clicked (currently only circles are added) */
+ { wimp_window_state state;
+   unsigned origin_x, origin_y;
+
+   NOT_USED(handle);
+   NOT_USED(event_code);
+
+   /* Calculate where the work area origin is on screen (or off screen) */
+   /* We need the work area origin so we can convert between the coordinates
+    * of the mouse click (in screen coordinates) and the work area coordinates
+    * where we want to add the shape
+    */
+   state.w = event->pointer.w;
+   wimp_get_window_state(&state);
+
+   origin_x = state.visible.x0 - state.xscroll;
+   origin_y = state.visible.y1 - state.yscroll;
+
+
+   /* Check there's enough room in the objects array for a new object */
+   if (num_objects < MAXNUMOBJECTS)
+    { /* If the select button was pressed then we add our object*/
+      if (event->pointer.buttons & wimp_CLICK_SELECT)
+       { objects[num_objects].type   = CIRCLE;
+         objects[num_objects].x      = event->pointer.pos.x - origin_x;
+         objects[num_objects].y      = event->pointer.pos.y - origin_y;
+         objects[num_objects].colour = current_colour;
+
+         /* Make sure the object appears in the window */
+         force_redraw_object(objects+num_objects, id_block->this_obj);
+
+         /* Increase num_objects because there's now one more object */
+         num_objects++;
+       }
+    }
+   else
+    { /* 'beep' if we can't add any more objects */
+      os_bell();
+    }
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result viewer_redraw(wimp_event_no event_code, wimp_block *event, toolbox_block *id_block, void *handle)
+/* This function redraws the window when the wimp requests us to do so */
+ { bool more;
+   int  origin_x;
+   int  origin_y;
+
+   assert(event_code == wimp_REDRAW_WINDOW_REQUEST);
+   NOT_USED(event_code);
+   NOT_USED(event);
+   NOT_USED(handle);
+
+   more = wimp_redraw_window(&event->redraw);
+
+   /* Calculate where the work area origin is on screen (or off screen) */
+   origin_x = event->redraw.box.x0 - event->redraw.xscroll;
+   origin_y = event->redraw.box.y1 - event->redraw.yscroll;
+
+   try
+    { while (more)
+       { unsigned object_idx;
+
+         for (object_idx = 0; object_idx < num_objects; object_idx++)
+          { draw_object(&objects[object_idx], origin_x, origin_y);
+          }
+         more = wimp_get_rectangle(&event->redraw);
+       }
+    }
+   catch
+    { /* If there's an error during redraw then we could run into an infinite loop
+       * if the error report window covers up the window and so causes another redraw and another error.
+       * To avoid this happening, we hide the window
+       */
+      toolbox_hide_object(0, id_block->this_obj);
+      throw();
+    }
+   catch_end
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static void click_initialise(int argc, char *argv[])
+ { toolbox_o viewer_id;
+
+   NOT_USED(argc);
+   NOT_USED(argv);
+
+#ifndef NDEBUG
+   /* Redirect error stream */
+   freopen("pipe:$.debug", "w", stderr);
+#endif
+
+   nevent_wimp_initialise();
+
+   /* Allocate some memory for the object array */
+   objects = memory_allocate(MAXNUMOBJECTS * sizeof(object));
+
+   viewer_id = toolbox_create_object(0, (toolbox_id)"Viewer");
+   nevent_wimp_register_handler(viewer_id, wimp_REDRAW_WINDOW_REQUEST, viewer_redraw,             NULL);
+   nevent_wimp_register_handler(viewer_id, wimp_MOUSE_CLICK,           object_add_object_handler, NULL);
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, action_COLOUR_DBOX_COLOUR_SELECTED, object_set_colour, NULL);
+ }
+
+
+
+
+/* Respond to all actions and messages */
+static const int toolbox_actions[] =
+ { 0x44ec0,
+   0x829c2,
+   0x82a91,
+   0
+ };
+
+
+#if 0
+/* no messages, so NULL is used in the this_application struture */
+static const int wimp_messages[] =
+ {
+ };
+#endif
+
+
+/* The variable which the application system required */
+application this_application =
+ { "<Click$Dir>",
+   310,
+   toolbox_actions,
+   NULL, /*wimp_messages,*/
+   3,
+   click_initialise,
+   NULL
+ };

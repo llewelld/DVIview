@@ -1,0 +1,77 @@
+/**** pic_sprite.h ****/
+/* Handles sprite pictures
+ * (c) Paul Field 1996
+ */
+
+#ifndef os_H
+#include "os.h"
+#endif
+
+typedef struct sprite_pic_str sprite_pic;
+
+
+sprite_pic* sprite_pic_construct(const char* file_name);
+ /* Pre: file_name != NULL
+  *      file_name refers to a sprite file
+  * Exceptions: exception_NO_MEMORY, os exceptions
+  * Creates a sprite picture from the sprite file 'file_name' and returns it
+  */
+
+
+void sprite_pic_destruct(sprite_pic *pic);
+ /* Frees the memory associated with 'pic' (pic may be NULL)
+  */
+
+
+void sprite_pic_draw
+ ( const sprite_pic* pic,
+   int               pic_origin_x,
+   int               pic_origin_y,
+   unsigned          scale_percent_x,
+   unsigned          scale_percent_y,
+   const os_box*     clip);
+ /* Pre: pic != NULL
+  *      clip != NULL
+  *      (pic_origin_x, pic_origin_y) is the screen position of the bottom left of the picture (in Draw units)
+  *      (scale_percent_x, scale_percent_y) is the magnification of the picture on each axis as a percentage
+  *      clip is the current graphics clipping rectangle (typically returned by the Wimp)
+  * Exceptions: os exceptions
+  * Draws the picture
+  */
+
+
+void sprite_pic_size(const sprite_pic* pic, unsigned* width, unsigned* height);
+ /* Pre: pic != NULL
+  *      width != NULL
+  *      height != NULL
+  * Returns the width and height of the sprite_pic in Draw units
+  */
+
+
+void sprite_pic_save
+ ( const sprite_pic* pic,
+   int               pic_origin_x,
+   int               pic_origin_y,
+   unsigned          scale_percent_x,
+   unsigned          scale_percent_y
+ );
+ /* Pre: pic != NULL
+  *      (pic_origin_x, pic_origin_y) is the screen position of the bottom left of the picture (in Draw units)
+  *      (scale_percent_x, scale_percent_y) is the magnification of the picture on each axis as a percentage
+  * Exceptions: os exceptions
+  * Saves the diagram as a stream of draw objects using the save_buffer module
+  */
+
+
+unsigned sprite_pic_estimate_save_size(const sprite_pic* pic);
+ /* Pre: pic != NULL
+  *      Returns the approximate size of the output produced by sprite_pic_save()
+  */
+
+
+
+#ifndef NDEBUG
+void sprite_pic_debug_output(const sprite_pic* pic);
+#else
+#define sprite_pic_debug_output(p)
+#endif

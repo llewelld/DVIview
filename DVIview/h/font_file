@@ -1,0 +1,17 @@
+/*** font_file.h ***/
+/* Provides access to font files
+ * (c) Paul Field 1996
+ */
+
+
+const char* font_file_name(const char* font_name, const char* leaf_name);
+ /* Pre: font_name != NULL
+  *      leaf_name != NULL
+  * Exceptions: os, if filename is too long
+  *
+  * Returns the file name of the 'leaf_name' file for the named font.
+  * The value returned is valid until the next call to this function
+  *
+  * Example:
+  *  f = file_construct(font_file_name("cmr10", "tfm"))
+  */

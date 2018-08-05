@@ -1,0 +1,68 @@
+/**** units.c ****/
+/* Factors and functions for converting between different units
+ * (c) Paul Field
+ */
+
+#include "units.h"
+
+#include <assert.h>
+#include "os.h"
+
+
+int round_divide(int a, int b)
+ { bool positive_result;
+   int  result;
+
+   if (a < 0)
+    { a = -a;
+      positive_result = FALSE;
+    }
+   else
+    { positive_result = TRUE;
+    }
+
+
+   if (b < 0)
+    { b = -b;
+      positive_result = !positive_result;
+    }
+
+   result = (a + b/2) / b;
+   return positive_result ? result : -result;
+ }
+
+
+
+
+
+void units_round_draw_to_pixel(int* x, int* y)
+ { static const int mode_vars[3] = {os_MODEVAR_XEIG_FACTOR, os_MODEVAR_YEIG_FACTOR, -1};
+
+   int values[2];
+   int pixel_x;
+   int pixel_y;
+
+
+   assert(x);
+   assert(y);
+
+   os_read_vdu_variables((os_vdu_var_list *)mode_vars, values);
+
+   pixel_x = (1 << values[0])*DrawinOS;
+   /* Below 0, rounding gives the pixel above so we adjust by a pixel
+    * (e.g. if 256 draw = pixel, -128 / 256 * 256 = 0, when we actually
+    * want -256)
+    */
+   if (*x < 0)
+    { *x -= (pixel_x-1);
+    }
+   *x /= pixel_x;  /* use two steps to avoid possible compiler rearrangement */
+   *x *= pixel_x;
+
+   pixel_y = (1 << values[1])*DrawinOS;
+   if (*y < 0)
+    { *y -= (pixel_y-1);
+    }
+   *y /= pixel_y;  /* use two steps to avoid possible compiler rearrangement */
+   *y *= pixel_y;
+ }

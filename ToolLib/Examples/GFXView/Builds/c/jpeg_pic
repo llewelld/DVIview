@@ -1,0 +1,149 @@
+/*** jpeg_pic.c ***/
+/* Routines for loading and displaying a jpeg
+ * (c) Paul Field 1995
+ */
+
+
+#include "jpeg_pic.h"
+
+#include <assert.h>
+#include <stdlib.h>
+
+#include "jpeg.h"
+#include "osfile.h"
+#include "wimpreadsysinfo.h"
+
+#include "allocate.h"
+#include "exception.h"
+#include "shifting.h"
+
+
+struct jpeg_pic_str
+ { jpeg_image *jpeg;
+ };
+
+
+
+bool jpeg_pic_supported(void)
+ { return getenv("GFXView$AllowJPEGs") != NULL;
+ }
+
+
+
+
+jpeg_pic *jpeg_pic_create(const char *file_name)
+ { int      size;
+   bits     file_type;
+   jpeg_pic *pic;
+
+   osfile_read_stamped_no_path(file_name, NULL, NULL, &size, NULL, &file_type);
+   assert(file_type == jpeg_FILE_TYPE);
+
+   pic = memory_allocate(sizeof(*pic));
+   pic->jpeg = NULL;   /* It's OK to 'free' a NULL */
+
+   try
+    { shifting_allocate((shifting_ptr)&pic->jpeg, size);
+      osfile_load_stamped_no_path(file_name, (byte *)pic->jpeg, NULL, NULL, NULL, NULL);
+    }
+   catch
+    { jpeg_pic_destroy(pic);
+      throw();
+    }
+   catch_end
+
+   return pic;
+ }
+
+
+
+
+void jpeg_pic_destroy(jpeg_pic *pic)
+ { if (pic != NULL)
+    { shifting_free((shifting_ptr)&pic->jpeg);
+      memory_free(pic);
+    }
+ }
+
+
+
+
+void jpeg_pic_draw(const jpeg_pic *pic, int origin_x, int origin_y, unsigned scale_percent, const os_box *clip)
+ { os_factors scale_factors;
+   int        xdpi;
+   int        ydpi;
+   int        x_eig;
+   int        y_eig;
+   unsigned   x_os_per_pixel;
+   unsigned   y_os_per_pixel;
+   unsigned   x_pixels_per_inch;
+   unsigned   y_pixels_per_inch;
+
+   assert(pic != NULL);
+   NOT_USED(clip);
+
+   jpeginfo_dimensions(pic->jpeg, shifting_size((shifting_ptr)&pic->jpeg), NULL, NULL, &xdpi, &ydpi, NULL);
+
+   os_read_mode_variable(os_CURRENT_MODE, os_MODEVAR_XEIG_FACTOR, &x_eig);
+   x_os_per_pixel    = 1 << x_eig;
+   x_pixels_per_inch = os_INCH / x_os_per_pixel;
+
+   os_read_mode_variable(os_CURRENT_MODE, os_MODEVAR_YEIG_FACTOR, &y_eig);
+   y_os_per_pixel    = 1 << y_eig;
+   y_pixels_per_inch = os_INCH / y_os_per_pixel;
+
+   /* Set up scale factors */
+   scale_factors.xmul = x_pixels_per_inch * scale_percent;
+   scale_factors.xdiv = xdpi              * 100;
+
+   scale_factors.ymul = y_pixels_per_inch * scale_percent;
+   scale_factors.ydiv = ydpi              * 100;
+
+   jpeg_plot_scaled
+    ( pic->jpeg,
+      origin_x,
+      origin_y,
+      &scale_factors,
+      shifting_size((shifting_ptr)&pic->jpeg),
+      jpeg_SCALE_DITHERED | jpeg_SCALE_ERROR_DIFFUSED
+    );
+ }
+
+
+
+void jpeg_pic_size(const jpeg_pic *pic, unsigned *width, unsigned *height)
+ { int jpeg_width;
+   int jpeg_height;
+   int xdpi;
+   int ydpi;
+
+   assert(pic != NULL);
+   assert(width != NULL);
+   assert(height != NULL);
+
+   jpeginfo_dimensions(pic->jpeg, shifting_size((shifting_ptr)&pic->jpeg), &jpeg_width, &jpeg_height, &xdpi, &ydpi, NULL);
+
+   /* Convert width,height from pixels to OS units */
+   *width  = (jpeg_width  * os_INCH)/xdpi;
+   *height = (jpeg_height * os_INCH)/ydpi;
+ }
+
+
+
+
+unsigned jpeg_pic_suggested_scale(const jpeg_pic *pic)
+ { int        xdpi;
+   int        x_eig;
+   unsigned   x_os_per_pixel;
+   unsigned   x_pixels_per_inch;
+
+   assert(pic != NULL);
+
+   jpeginfo_dimensions(pic->jpeg, shifting_size((shifting_ptr)&pic->jpeg), NULL, NULL, &xdpi, NULL, NULL);
+
+   os_read_mode_variable(os_CURRENT_MODE, os_MODEVAR_XEIG_FACTOR, &x_eig);
+   x_os_per_pixel    = 1 << x_eig;
+   x_pixels_per_inch = os_INCH / x_os_per_pixel;
+
+   return (xdpi*100) / x_pixels_per_inch;
+ }

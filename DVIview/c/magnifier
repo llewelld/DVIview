@@ -1,0 +1,439 @@
+/**** magnifier.c ****/
+/* Magnifier window
+ * (c) Paul Field
+ */
+
+#include "magnifier.h"
+
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "scale.h"
+#include "window.h"
+
+#include "exception.h"
+#include "nev_toolbox.h"
+#include "nev_wimp.h"
+#include "tbx.h"
+
+#include "optionfile.h"
+#include "units.h"
+
+
+
+typedef struct magnifier_choices_str
+ { unsigned     scale_percent;
+   os_box       position;
+ }choices;
+
+
+/* The magnifier's state */
+static bool                 empty = TRUE;
+static page*                magnified_page = NULL;
+static magnifier_tracker_fn tracker_fn;
+static void*                tracker_handle;
+static int                  x;
+static int                  y;
+
+static toolbox_o    magnifier_id;
+static choices      current_choices;
+static choices      default_choices = { 800, {1992, 1576, 2520, 2008}};
+
+
+
+#ifndef NDEBUG
+static bool initialised = FALSE;
+#endif
+
+
+
+enum
+ { action_save_choices = 0x600,
+   action_show         = 0x601
+ };
+
+
+
+static void choices_save(FILE* file)
+ { fprintf
+    ( file,
+      "mag_scale:%u\n"
+      "mag_position:%d,%d,%d,%d\n",
+      default_choices.scale_percent,
+      default_choices.position.x0,
+      default_choices.position.y0,
+      default_choices.position.x1,
+      default_choices.position.y1
+    );
+ }
+
+
+
+
+static bool choices_parse(const char* option, char* params)
+ { if (strcmp(option, "mag_scale") == 0)
+    { sscanf(params, "%u", &default_choices.scale_percent);
+      return TRUE;
+    }
+   else
+    { if (strcmp(option, "mag_position") == 0)
+       { sscanf
+          ( params,
+            "%d ,%d ,%d ,%d",
+            &default_choices.position.x0,
+            &default_choices.position.y0,
+            &default_choices.position.x1,
+            &default_choices.position.y1
+          );
+         return TRUE;
+       }
+    }
+   return FALSE;
+ }
+
+
+
+
+static void choices_finish(void)
+ { current_choices = default_choices;
+ }
+
+
+
+
+
+static nevent_result redraw(wimp_event_no event_code, wimp_block* event, toolbox_block* id_block, void* handle)
+ { bool  more;
+   int   origin_x;
+   int   origin_y;
+   int   centre_x;
+   int   centre_y;
+
+   assert(event_code == wimp_REDRAW_WINDOW_REQUEST);
+   assert(event);
+   NOT_USED(id_block);
+   NOT_USED(event_code);
+   NOT_USED(handle);
+
+   more = wimp_redraw_window(&event->redraw);
+
+   assert(event->redraw.xscroll == 0);
+   assert(event->redraw.yscroll == 0);
+
+   /* Centre coordinates are calculated by:
+    *  cx = x0 + width/2
+    *     = x0 + (x1-x0)/2
+    *     = (x0+x1)/2
+    */
+   centre_x = (event->redraw.box.x0 + event->redraw.box.x1)/2*DrawinOS;
+   centre_y = (event->redraw.box.y0 + event->redraw.box.y1)/2*DrawinOS;
+
+   origin_x = centre_x - (x * (int)current_choices.scale_percent)/100;
+   origin_y = centre_y - (y * (int)current_choices.scale_percent)/100;
+
+   try
+    { while (more)
+       { if (!empty)
+          { page_draw(magnified_page, origin_x, origin_y, current_choices.scale_percent, &event->redraw.clip);
+          }
+         more = wimp_get_rectangle(&event->redraw);
+       }
+    }
+   catch
+    { /* Run through any remaining rectangles */
+      do
+       { more = wimp_get_rectangle(&event->redraw);
+       }
+      while(more);
+      throw();
+    }
+   catch_end
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result show(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { toolbox_position full_position;
+
+   assert(event_code == action_show);
+   assert(event);
+
+   NOT_USED(id_block);
+   NOT_USED(event);
+   NOT_USED(event_code);
+   NOT_USED(handle);
+
+   full_position.full.visible = current_choices.position;
+   full_position.full.xscroll = 0;
+   full_position.full.yscroll = 0;
+   full_position.full.next    = wimp_TOP;
+   toolbox_show_object(0, magnifier_id, toolbox_POSITION_FULL, &full_position, toolbox_NULL_OBJECT, toolbox_NULL_COMPONENT);
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static void store_position(void)
+ { wimp_window_state state;
+
+   state.w = window_get_wimp_handle(0, magnifier_id);
+   wimp_get_window_state(&state);
+   current_choices.position = state.visible;
+ }
+
+
+
+
+static nevent_result hide(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { assert(event_code == action_WINDOW_DIALOGUE_COMPLETED);
+
+   NOT_USED(event);
+   NOT_USED(event_code);
+   NOT_USED(handle);
+   NOT_USED(id_block);
+
+   store_position();
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result save(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { assert(event_code == action_save_choices);
+   assert(event);
+
+   NOT_USED(id_block);
+   NOT_USED(event);
+   NOT_USED(event_code);
+   NOT_USED(handle);
+
+   store_position();
+
+   default_choices = current_choices;
+   optionsfile_save();
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result force_no_scroll(wimp_event_no event_code, wimp_block* event, toolbox_block* id_block, void* handle)
+ { assert(event_code == wimp_OPEN_WINDOW_REQUEST);
+   assert(event);
+   NOT_USED(id_block);
+   NOT_USED(event_code);
+   NOT_USED(handle);
+
+   /* Don't allow window to scroll */
+   event->open.xscroll = 0;
+   event->open.yscroll = 0;
+
+   wimp_open_window(&event->open);
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static void shift_display(int delta_x, int delta_y)
+ { wimp_w w;
+   os_box extent;
+   os_box redraw;
+
+   assert(delta_x % DrawinOS == 0);
+   assert(delta_y % DrawinOS == 0);
+
+   delta_x = (delta_x * (int)current_choices.scale_percent)/100 / DrawinOS;
+   delta_y = (delta_y * (int)current_choices.scale_percent)/100 / DrawinOS;
+
+   /* Copy the page area to its new position */
+   w = window_get_wimp_handle(0, magnifier_id);
+   window_get_extent(0, magnifier_id, &extent);
+   wimp_block_copy
+    ( w,
+      extent.x0,
+      extent.y0,
+      extent.x1,
+      extent.y1,
+      extent.x0 + delta_x,
+      extent.y0 + delta_y
+    );
+
+   /* Redraw the uncovered vertical strip */
+   redraw = extent;
+   if (delta_x < 0)
+    { redraw.x0 = redraw.x1 + delta_x;  /* Strip is on the right */
+    }
+   else
+    { redraw.x1 = redraw.x0 + delta_x;  /* Strip is on the left */
+    }
+   window_force_redraw(0, magnifier_id, &redraw);
+
+   /* Redraw the uncovered horizontal strip */
+   redraw = extent;
+   if (delta_y < 0)
+    { redraw.y0 = redraw.y1 + delta_y;  /* Strip is at the top */
+    }
+   else
+    { redraw.y1 = redraw.y0 + delta_y;  /* Strip is at the bottom */
+    }
+   window_force_redraw(0, magnifier_id, &redraw);
+ }
+
+
+
+
+static void update_display(void)
+ { os_box redraw = {0,-5000,5000,0};
+
+   window_force_redraw(0, magnifier_id, &redraw);
+ }
+
+
+
+
+static nevent_result fill_scale(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { assert(event_code == action_SCALE_ABOUT_TO_BE_SHOWN);
+   NOT_USED(event);
+   NOT_USED(event_code);
+   NOT_USED(handle);
+
+   scale_set_value(0, id_block->this_obj, current_choices.scale_percent);
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result scale(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { const scale_action_apply_factor* scale_action = (scale_action_apply_factor *)event->data.reserved;
+
+   assert(event_code == action_SCALE_APPLY_FACTOR);
+   NOT_USED(event);
+   NOT_USED(event_code);
+   NOT_USED(handle);
+   NOT_USED(id_block);
+
+   current_choices.scale_percent = scale_action->percent;
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static nevent_result call_tracker(wimp_event_no event_code, wimp_block* event, toolbox_block* id_block, void* handle)
+ { assert(event_code == wimp_NULL_REASON_CODE);
+
+   NOT_USED(event_code);
+   NOT_USED(event);
+   NOT_USED(id_block);
+   NOT_USED(handle);
+
+   tracker_fn(tracker_handle);
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+static void enable_tracking(void)
+ { nevent_wimp_register_handler(nevent_ALL_OBJECTS, wimp_NULL_REASON_CODE, call_tracker, NULL);
+ }
+
+
+
+
+static void disable_tracking(void)
+ { nevent_wimp_deregister_handler(nevent_ALL_OBJECTS, wimp_NULL_REASON_CODE, call_tracker, NULL);
+ }
+
+
+
+
+void magnifier_init(void)
+ { toolbox_o scale_id;
+
+   assert(!initialised);
+
+   magnifier_id = tbx_shared_object_id("Magnifier");
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, action_show,                      show,            NULL);
+   nevent_toolbox_register_handler(magnifier_id,       action_WINDOW_DIALOGUE_COMPLETED, hide,            NULL);
+   nevent_wimp_register_handler   (magnifier_id,       wimp_REDRAW_WINDOW_REQUEST,       redraw,          NULL);
+   nevent_wimp_register_handler   (magnifier_id,       wimp_OPEN_WINDOW_REQUEST,         force_no_scroll, NULL);
+
+   scale_id = tbx_shared_object_id("MagScale");
+   nevent_toolbox_register_handler(scale_id,           action_SCALE_ABOUT_TO_BE_SHOWN, fill_scale, NULL);
+   nevent_toolbox_register_handler(scale_id,           action_SCALE_APPLY_FACTOR,      scale,      NULL);
+   nevent_toolbox_register_handler(nevent_ALL_OBJECTS, action_save_choices,            save,       NULL);
+
+   optionsfile_register(choices_parse, choices_save, choices_finish);
+
+#ifndef NDEBUG
+   initialised = TRUE;
+#endif
+ }
+
+
+
+
+void magnifier_set_page(page* p, int new_x, int new_y, magnifier_tracker_fn f, void* new_handle)
+ { assert(initialised);
+   assert(p != NULL);
+
+   /* Discard any existing page */
+   if (!empty)
+    { page_dec_reference(magnified_page);
+      disable_tracking();
+    }
+
+   page_inc_reference(p);
+   empty          = FALSE;
+   magnified_page = p;
+   tracker_fn     = f;
+   tracker_handle = new_handle;
+   x              = new_x;
+   y              = new_y;
+
+   enable_tracking();
+   update_display();
+ }
+
+
+
+
+void magnifier_set_position(int new_x, int new_y)
+ { assert(initialised);
+   assert(!empty);
+
+   if (x != new_x || y != new_y)
+    { shift_display(x - new_x, y - new_y);
+      x = new_x;
+      y = new_y;
+    }
+ }
+
+
+
+void magnifier_set_empty(void)
+ { assert(initialised);
+
+   if (!empty)
+    { page_dec_reference(magnified_page);
+      disable_tracking();
+      empty = TRUE;
+      update_display();
+    }
+ }

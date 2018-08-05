@@ -1,0 +1,47 @@
+/*** line_plotter.c ***/
+/* A line_processor that plots lines
+ * (This implementation is for the RISC OS operating system and uses OSLib function calls)
+ * (c) Paul Field
+ * v1.00 - 21/11/95
+ */
+
+#include "line_plotter.h"
+
+#include "os.h"
+#include "colourtrans.h"
+
+
+static int origin_x;
+static int origin_y;
+
+
+static void line_plotter_initialise(void)
+ {}
+
+
+
+static void line_plotter_add_line(colour c, int x0, int y0, int x1, int y1)
+ { os_colour converted_colour;
+
+   converted_colour = (os_colour)(c << 8);  /* An os_colour is of the form BGR0 */
+
+   colourtrans_set_gcol(converted_colour, 0, os_ACTION_OVERWRITE, NULL);
+   os_plot(os_MOVE_TO, x0+origin_x, y0+origin_y);
+   os_plot(os_PLOT_SOLID + os_PLOT_TO, x1+origin_x, y1+origin_y);
+ }
+
+
+
+static void line_plotter_finished(void)
+ {}
+
+
+
+void line_plotter_origin(int x, int y)
+ { origin_x = x;
+   origin_y = y;
+ }
+
+
+
+const line_processor line_plotter = { line_plotter_initialise, line_plotter_add_line, line_plotter_finished };

@@ -1,0 +1,116 @@
+/*** nevent.c ***/
+/* (c) Paul Field
+ */
+
+#include "nevent.h"
+
+#include <assert.h>
+#include <stdio.h>
+
+#include "nev_support.h"
+
+
+
+/* Variables used for debugging checks */
+#ifndef NDEBUG
+static bool initialised = FALSE;
+#endif
+
+static toolbox_block*         id_block;
+static nevent_poll_controller poll_controller = {0,0};
+
+/* The mask has bits set where the Wimp_Poll mask may be 1 (see PRM p3-117) */
+static const wimp_poll_flags poll_may_be_1 = 0x1ce3973;
+
+
+
+
+wimp_event_no nevent_poll(wimp_block* event_block, void* poll_word)
+ { wimp_event_no   event_num;
+   wimp_poll_flags mask;
+   wimp_block      local_event_block;
+
+   assert(initialised);
+
+   if (event_block == NULL)
+    { event_block = &local_event_block;
+    }
+
+   mask = ((nevent_support_mask & poll_may_be_1) | poll_controller.set) & ~poll_controller.clear;
+
+   event_num = wimp_poll(mask, event_block, poll_word);
+   nevent_support_dispatch(event_num, event_block, id_block);
+
+   return event_num;
+ }
+
+
+
+
+wimp_event_no nevent_poll_idle
+ ( wimp_block*   event_block,
+   unsigned int  earliest,
+   void*         poll_word
+ )
+ { wimp_event_no   event_num;
+   wimp_poll_flags mask;
+   wimp_block      local_event_block;
+
+   assert(initialised);
+
+   if (event_block == NULL)
+    { event_block = &local_event_block;
+    }
+
+   mask = ((nevent_support_mask & poll_may_be_1) | poll_controller.set) & ~poll_controller.clear;
+   event_num = wimp_poll_idle(mask, event_block, earliest, poll_word);
+   nevent_support_dispatch(event_num, event_block, id_block);
+
+   return event_num;
+ }
+
+
+
+
+void nevent_set_poll_control(nevent_poll_controller controller)
+ { assert((controller.set & controller.clear) == 0);
+
+   poll_controller = controller;
+ }
+
+
+
+
+nevent_poll_controller nevent_force_poll_bits_set(wimp_poll_flags m)
+ { nevent_poll_controller old;
+
+   old = poll_controller;
+   poll_controller.set   |= m;
+   poll_controller.clear &= ~m;
+   return old;
+ }
+
+
+
+
+nevent_poll_controller nevent_force_poll_bits_clear(wimp_poll_flags m)
+ { nevent_poll_controller old;
+
+   old = poll_controller;
+   poll_controller.set   &= ~m;
+   poll_controller.clear |= m;
+   return old;
+ }
+
+
+
+
+void nevent_initialise(toolbox_block* b)
+ { assert(!initialised);
+
+#ifndef NDEBUG
+   initialised = TRUE;
+#endif
+
+   id_block = b;
+ }

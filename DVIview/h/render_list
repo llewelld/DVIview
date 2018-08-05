@@ -1,0 +1,29 @@
+/**** render_list.h ****/
+/* Maintains a list of which system fonts should be used to render which TeX fonts
+ * (c) Paul Field
+ */
+
+#include "bool.h"
+
+
+bool render_list_find(const char* font_name, const char** render_font);
+ /* Pre:  font_name != NULL
+  *       render_font != NULL
+  * Exceptions: none
+  *
+  * Returns TRUE iff the user has specified a system font to render font_name
+  * and, if so, makes *render_font point to that system font's name
+  */
+
+
+void render_list_construct(void);
+ /* Exceptions: exception_NO_MEMORY, os
+  *
+  * Loads the render lists (call before any other function in this module).
+  */
+
+
+void render_list_destruct(void);
+ /* Frees all resources associated with the render lists.
+  * (Typically, you would call this at the end of the program)
+  */

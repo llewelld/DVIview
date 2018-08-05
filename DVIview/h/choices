@@ -1,0 +1,17 @@
+/**** choices.h ****/
+/* Handles the choices dialogue box
+ * (c) Paul Field
+ */
+
+void choices_init(void);
+ /* Sets up the choices dialogue
+  * Call this before optionsfile_load()
+  */
+
+unsigned choices_scale(void);
+ /* Returns the user's choice of scale (as a percentage)
+  */
+
+void choices_offsets(int* left, int* top);
+ /* Returns the user's choice of left and top offsets in Draw units
+  */

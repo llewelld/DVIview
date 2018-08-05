@@ -1,0 +1,31 @@
+/*** font_file.c ***/
+/* Provides access to font files
+ * (c) Paul Field 1996
+ */
+
+#include "font_file.h"
+
+#include <stdio.h>
+#include <string.h>
+
+#include "os.h"
+
+#include "exception.h"
+#include "message.h"
+
+
+#define PathName "TeXFonts:"
+
+
+static char file_name[os_FILE_NAME_LIMIT];
+
+
+const char* font_file_name(const char* font_name, const char* leaf_name)
+ { if (os_FILE_NAME_LIMIT <= strlen(PathName) + strlen(font_name) + 1 + strlen(leaf_name))
+    { throw_string(message_lookup_and_substitute("LongFontName", font_name, NULL, NULL, NULL));
+    }
+
+   sprintf(file_name, "%s%s.%s", PathName, font_name, leaf_name);
+
+   return file_name;
+ }

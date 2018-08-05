@@ -1,0 +1,92 @@
+/*** list.h ***/
+/* Abstract data type :
+ *   Simple list (singly-linked)
+ * (c) Paul Field
+ * V1.00 - 16/5/1995
+ * V1.10 - 15/7/1997 - Change to use pointers to lists, make const-correct
+ */
+
+#ifndef _list_h
+#define _list_h
+
+#include <stddef.h>
+
+#include "bool.h"
+
+/* This module implements a singly-linked list
+ * Elements to be placed in the list must be allocated by 'list_alloc_element'
+ * which acts like 'malloc' and must be deallocated by 'list_free_element'
+ * An element can only appear in one list at a time. You can get
+ * around this restriction either by copying the object or by
+ * 'list_alloc_element'ing pointers to the object and placing these pointers
+ * in the lists.
+ *
+ * This module performs extensive checks on function arguments if
+ * it is compiled without NDEBUG defined.
+ * The module can also help to detect memory leaks. When your program
+ * exits the list module will output (on stderr) the number of lists not
+ * destroyed and the number of list elements (i.e. objects allocated with
+ * list_alloc_element()) not freed.
+ * You MUST compile your production code with NDEBUG defined. There is
+ * a large time overhead for these checks.
+ */
+
+typedef struct list_str list;              /* Opaque types */
+
+
+void *list_alloc_element(size_t size);
+ /* As 'malloc' but objects returned can be placed in a list.
+  */
+
+void list_free_element(void *element);
+ /* Pre: element must not be a member of a list
+  *      (element may equal NULL)
+  * As 'free' but for 'list_alloc_element'ed objects.
+  */
+
+
+bool list_create(list **l);
+ /* Pre: l != NULL, **l is not already a list
+  * Creates an empty list in *l. Returns TRUE if successful.
+  */
+
+void list_destroy(list *l);
+ /* Frees the memory taken up by the list
+  * (calls list_free_element for all elements in the list)
+  */
+
+bool list_is_empty(const list *);
+ /* Returns TRUE if the list contains no elements.
+  */
+
+void list_cons(list *, const void *element);
+ /* Pre: element != NULL
+  *      element was allocated by list_alloc_element(),
+  *      element is not presently in a list
+  * Adds element to the front of the list
+  */
+
+void *list_remove_head(list *);
+ /* Pre: list is not empty
+  * Removes the element at the head of the list and returns it
+  */
+
+unsigned list_length(const list *);
+ /* Returns the number of elements in the list
+  */
+
+void *list_nth_element(const list *, unsigned n);
+ /* Pre: length list >= n
+  *      n > 0
+  * Returns the nth element of the list.
+  * N.B. This operation caches the last 'nth element' access so that
+  *      loops are fast:
+  *        for (n=1; n <= list_length(l); n++)
+  *         { do_something(list_nth_element(l,n));
+  *         }
+  *      in this loop list_nth_element will be O(1), although
+  *      for other styles of list access the worst case is O(n)
+  *
+  */
+
+#endif

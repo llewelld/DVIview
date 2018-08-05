@@ -1,0 +1,221 @@
+/*** jpeg_pic.c ***/
+/* Routines for loading and displaying a jpeg
+ * (c) Paul Field 1995
+ */
+
+
+#include "pic_jpeg.h"
+
+#include <assert.h>
+#include <stdlib.h>
+
+#include "drawfile.h"
+#include "jpeg.h"
+#include "macros.h"
+#include "osfile.h"
+#include "wimpreadsysinfo.h"
+
+#include "allocate.h"
+#include "exception.h"
+#include "message.h"
+#include "save_buffer.h"
+#include "shifting.h"
+#include "shifting_send.h"
+
+#include "units.h"
+
+
+struct jpeg_pic_str
+ { jpeg_image *jpeg;
+ };
+
+
+
+static bool jpeg_pic_supported(void)
+ { return getenv("DVIview$AllowJPEGs") != NULL;
+ }
+
+
+
+
+jpeg_pic *jpeg_pic_construct(const char *file_name)
+ { int      size;
+   bits     file_type;
+   jpeg_pic *pic;
+
+   if (!jpeg_pic_supported())
+    { throw_string(message_lookup_and_substitute("NoJPEGs", file_name, NULL, NULL, NULL));
+    }
+
+   osfile_read_stamped_no_path(file_name, NULL, NULL, &size, NULL, &file_type);
+   assert(file_type == jpeg_FILE_TYPE);
+
+   pic = memory_allocate(sizeof(*pic));
+   pic->jpeg = NULL;   /* It's OK to 'free' a NULL */
+
+   try
+    { shifting_allocate((shifting_ptr)&pic->jpeg, size);
+      osfile_load_stamped_no_path(file_name, (byte *)pic->jpeg, NULL, NULL, NULL, NULL);
+    }
+   catch
+    { jpeg_pic_destruct(pic);
+      throw();
+    }
+   catch_end
+
+   return pic;
+ }
+
+
+
+
+void jpeg_pic_destruct(jpeg_pic *pic)
+ { if (pic != NULL)
+    { shifting_free((shifting_ptr)&pic->jpeg);
+      memory_free(pic);
+    }
+ }
+
+
+
+
+void jpeg_pic_draw
+ ( const jpeg_pic* pic,
+   int               pic_origin_x,
+   int               pic_origin_y,
+   unsigned          scale_percent_x,
+   unsigned          scale_percent_y,
+   const os_box*     clip)
+ { os_factors scale_factors;
+   int        xdpi;
+   int        ydpi;
+   int        x_eig;
+   int        y_eig;
+   unsigned   x_os_per_pixel;
+   unsigned   y_os_per_pixel;
+   unsigned   x_pixels_per_inch;
+   unsigned   y_pixels_per_inch;
+
+   assert(pic != NULL);
+   NOT_USED(clip);
+
+   jpeginfo_dimensions(pic->jpeg, shifting_size((shifting_ptr)&pic->jpeg), NULL, NULL, &xdpi, &ydpi, NULL);
+
+   os_read_mode_variable(os_CURRENT_MODE, os_MODEVAR_XEIG_FACTOR, &x_eig);
+   x_os_per_pixel    = 1 << x_eig;
+   x_pixels_per_inch = os_INCH / x_os_per_pixel;
+
+   os_read_mode_variable(os_CURRENT_MODE, os_MODEVAR_YEIG_FACTOR, &y_eig);
+   y_os_per_pixel    = 1 << y_eig;
+   y_pixels_per_inch = os_INCH / y_os_per_pixel;
+
+   /* Set up scale factors */
+   scale_factors.xmul = x_pixels_per_inch * scale_percent_x;
+   scale_factors.xdiv = xdpi              * 100;
+
+   scale_factors.ymul = y_pixels_per_inch * scale_percent_y;
+   scale_factors.ydiv = ydpi              * 100;
+
+   jpeg_plot_scaled
+    ( pic->jpeg,
+      pic_origin_x / DrawinOS,
+      pic_origin_y / DrawinOS,
+      &scale_factors,
+      shifting_size((shifting_ptr)&pic->jpeg),
+      jpeg_SCALE_DITHERED | jpeg_SCALE_ERROR_DIFFUSED
+    );
+ }
+
+
+
+void jpeg_pic_size(const jpeg_pic *pic, unsigned *width, unsigned *height)
+ { int jpeg_width;
+   int jpeg_height;
+   int xdpi;
+   int ydpi;
+
+   assert(pic != NULL);
+   assert(width != NULL);
+   assert(height != NULL);
+
+   jpeginfo_dimensions(pic->jpeg, shifting_size((shifting_ptr)&pic->jpeg), &jpeg_width, &jpeg_height, &xdpi, &ydpi, NULL);
+
+   /* Convert width,height from pixels to Draw units */
+   *width  = (jpeg_width  * DrawinInch)/xdpi;
+   *height = (jpeg_height * DrawinInch)/ydpi ;
+ }
+
+
+
+
+void jpeg_pic_save
+ ( const jpeg_pic* pic,
+   int             pic_origin_x,
+   int             pic_origin_y,
+   unsigned        scale_percent_x,
+   unsigned        scale_percent_y
+ )
+ { drawfile_jpeg object;
+   unsigned      width;
+   unsigned      height;
+   unsigned      jpeg_size;
+   unsigned      fix_scale_x;
+   unsigned      fix_scale_y;
+
+   assert(pic != NULL);
+
+   jpeg_pic_size(pic, &width, &height);
+
+   object.width  = width;
+   object.height = height;
+
+   object.bbox.x0 = pic_origin_x;
+   object.bbox.y0 = pic_origin_y;
+   object.bbox.x1 = pic_origin_x + (int)(width  * scale_percent_x)/100;
+   object.bbox.y1 = pic_origin_y + (int)(height * scale_percent_y)/100;
+
+   jpeg_size = shifting_size((shifting_ptr)&pic->jpeg);
+   jpeginfo_dimensions(pic->jpeg, jpeg_size, NULL, NULL, &object.xdpi, &object.ydpi, NULL);
+
+   /* Calculate fixed-point scale factors */
+   fix_scale_x = (scale_percent_x << 16)/100;
+   fix_scale_y = (scale_percent_y << 16)/100;
+
+   /* Create transformation matrix to implement the scaling and translation required */
+   object.trfm.entries[0][0] = fix_scale_x;  object.trfm.entries[0][1] = 0;
+   object.trfm.entries[1][0] = 0;            object.trfm.entries[1][1] = fix_scale_y;
+   object.trfm.entries[2][0] = pic_origin_x; object.trfm.entries[2][1] = pic_origin_y;
+
+   object.len = jpeg_size;
+
+   save_buffer_send_unsigned(drawfile_TYPE_JPEG);
+   save_buffer_send_unsigned(2*sizeof(int) + offsetof(drawfile_jpeg, image) + ALIGN(jpeg_size));
+   save_buffer_send(&object, offsetof(drawfile_jpeg, image));
+   shifting_send(pic->jpeg, jpeg_size);
+   save_buffer_send("\0\0\0\0", ALIGN(jpeg_size) - jpeg_size); /* Pad to word boundary */
+ }
+
+
+
+
+unsigned jpeg_pic_estimate_save_size(const jpeg_pic* pic)
+ { assert(pic != NULL);
+
+   return 2*sizeof(int) + offsetof(drawfile_jpeg, image) + ALIGN(shifting_size((shifting_ptr)&pic->jpeg));
+ }
+
+
+
+#ifndef NDEBUG
+#include <stdio.h>
+
+void jpeg_pic_debug_output(const jpeg_pic* pic)
+ { assert(pic != NULL);
+
+   fprintf
+    ( stderr,
+      " JPEG file size: %u bytes\n",
+      shifting_size((shifting_ptr)&pic->jpeg)
+    );
+ }
+#endif

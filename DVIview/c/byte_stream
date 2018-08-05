@@ -1,0 +1,211 @@
+/*** byte_stream.c ***/
+/* A read-only stream of bytes
+ * (c) Paul Field 1996
+ */
+
+#include "byte_stream.h"
+
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "allocate.h"
+#include "exception.h"
+
+#include "file.h"
+
+
+
+typedef enum stream_type_enum
+ { stream_memory,
+   stream_file
+ }stream_type;
+
+
+
+typedef struct memory_stream_str
+ { const char* name;
+   byte*       memory;
+   size_t      extent;
+   size_t      position;
+ }memory_stream;
+
+
+
+struct byte_stream
+ { stream_type type;
+
+   union stream_union
+    { file*         f;
+      memory_stream m;
+    }stream;
+ };
+
+
+
+byte_stream* byte_stream_construct_from_file(const char* name)
+ { byte_stream* stream;
+
+   assert(name != NULL);
+
+   stream = memory_allocate(sizeof(byte_stream));
+
+   try
+    { stream->type     = stream_file;
+      stream->stream.f = file_construct(name);
+    }
+   catch
+    { memory_free(stream);
+    }
+   catch_end
+
+   return stream;
+ }
+
+
+
+
+byte_stream* byte_stream_construct_from_memory(void* bytes, size_t num_bytes, const char* name)
+ { byte_stream* stream;
+
+   assert(bytes != NULL);
+   assert(name != NULL);
+
+   stream = memory_allocate(sizeof(byte_stream));
+   stream->type              = stream_memory;
+   stream->stream.m.memory   = bytes;
+   stream->stream.m.extent   = num_bytes;
+   stream->stream.m.position = 0;
+   stream->stream.m.name     = name;
+
+   return stream;
+ }
+
+
+
+
+void byte_stream_destruct(byte_stream* stream)
+ { if (stream != NULL)
+    { if (stream->type == stream_file)
+       { file_destruct(stream->stream.f);
+       }
+      memory_free(stream);
+    }
+ }
+
+
+
+
+const char* byte_stream_name(const byte_stream* stream)
+ { assert(stream != NULL);
+
+   if (stream->type == stream_file)
+    { return file_name(stream->stream.f);
+    }
+   else
+    { assert(stream->type == stream_memory);
+
+      return stream->stream.m.name;
+    }
+ }
+
+
+
+
+void byte_stream_set_position(byte_stream* stream, unsigned position)
+ { assert(stream != NULL);
+   assert(position < byte_stream_extent(stream));
+
+   if (stream->type == stream_file)
+    { file_set_position(stream->stream.f, position);
+    }
+   else
+    { assert(stream->type == stream_memory);
+
+      stream->stream.m.position = position;
+    }
+ }
+
+
+
+
+unsigned byte_stream_get_position(const byte_stream* stream)
+ { assert(stream != NULL);
+
+   if (stream->type == stream_file)
+    { return file_get_position(stream->stream.f);
+    }
+   else
+    { assert(stream->type == stream_memory);
+
+      return stream->stream.m.position;
+    }
+ }
+
+
+
+
+unsigned byte_stream_extent(const byte_stream* stream)
+ { assert(stream != NULL);
+
+   if (stream->type == stream_file)
+    { return file_extent(stream->stream.f);
+    }
+   else
+    { assert(stream->type == stream_memory);
+
+      return stream->stream.m.extent;
+    }
+ }
+
+
+
+
+void byte_stream_read(byte_stream* stream, void* destination, size_t num_bytes_to_read)
+ { assert(stream != NULL);
+   assert(byte_stream_get_position(stream) + num_bytes_to_read <= byte_stream_extent(stream));
+
+   if (stream->type == stream_file)
+    { file_read(stream->stream.f, destination, num_bytes_to_read);
+    }
+   else
+    { memory_stream* m;
+
+      assert(stream->type == stream_memory);
+
+      m = &stream->stream.m;
+      memcpy(destination, m->memory + m->position, num_bytes_to_read);
+      m->position += num_bytes_to_read;
+    }
+ }
+
+
+
+
+void byte_stream_read_at(byte_stream* stream, void* destination, size_t num_bytes_to_read, unsigned position)
+ { assert(stream != NULL);
+   assert(position + num_bytes_to_read <= byte_stream_extent(stream));
+
+   if (stream->type == stream_file)
+    { file_read_at(stream->stream.f, destination, num_bytes_to_read, position);
+    }
+   else
+    { memory_stream* m;
+
+      assert(stream->type == stream_memory);
+
+      m = &stream->stream.m;
+      memcpy(destination, m->memory + position, num_bytes_to_read);
+      m->position = position + num_bytes_to_read;
+    }
+ }
+
+
+
+
+void byte_stream_time_stamp(const byte_stream* stream, unsigned char UTC[5])
+ { assert(stream != NULL);
+
+   assert(stream->type == stream_file);
+   file_time_stamp(stream->stream.f, UTC);
+ }

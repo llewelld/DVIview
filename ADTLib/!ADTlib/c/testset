@@ -1,0 +1,159 @@
+/* testset.c */
+/* A test harness for the set ADT
+ * (c) Paul Field
+ * V1.00 - 15/7/1995
+ */
+
+#include "set.h"
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <errno.h>
+
+static void _test_truth(const char *expression, bool value, unsigned line)
+ { if (!value)
+    { printf("line %u: %s is not true\n", line, expression);
+      exit(EXIT_FAILURE);
+    }
+ }
+
+#define test_truth(a) _test_truth(#a, a, __LINE__)
+
+/* This is a test harness and the only aspect of quality that
+ * matters is that every list function is thoroughly tested,
+ * thus I happily use test_truth to check things like memory allocation
+ */
+
+
+static int vstrcmp(const void *o1, const void *o2)
+ { return strcmp(o1,o2);
+ }
+
+static size_t string_size(const void *o)
+ { return strlen(o)+1;
+ }
+
+
+static void check_functionality(void)
+ { set *strings;
+   set *chars;
+   const char s1[] = "111";
+   const char s2[] = "2222";
+   const char s3[] = "3";
+
+   /***** Check set with dynamic structures *****/
+
+   /**** Check set_create ****/
+   test_truth(set_create(&strings, vstrcmp, string_size, 0));
+   test_truth(set_elements(strings) == 0);
+
+   /*** Add one element and check set ****/
+   test_truth(set_insert(strings, s1));
+   test_truth(set_elements(strings) == 1);
+   test_truth(set_contains(strings, s1));
+   test_truth(!set_contains(strings, s2));
+   test_truth(!set_contains(strings, s3));
+
+   /*** Add second element and check set ****/
+   /* We add s3 before s2 because we know about the internal ordering of sets and
+    * we don't want to insert elements in order
+    */
+   test_truth(set_insert(strings, s3));
+   test_truth(set_elements(strings) == 2);
+   test_truth(set_contains(strings, s1));
+   test_truth(!set_contains(strings, s2));
+   test_truth(set_contains(strings, s3));
+
+   /*** Add third element and check set ****/
+   test_truth(set_insert(strings, s2));
+   test_truth(set_elements(strings) == 3);
+   test_truth(set_contains(strings, s1));
+   test_truth(set_contains(strings, s2));
+   test_truth(set_contains(strings, s3));
+
+   /*** Now add elements that are already in the set ***/
+   test_truth(set_insert(strings, s1));
+   test_truth(set_insert(strings, s2));
+   test_truth(set_insert(strings, s3));
+   test_truth(set_elements(strings) == 3);
+   test_truth(set_contains(strings, s1));
+   test_truth(set_contains(strings, s2));
+   test_truth(set_contains(strings, s3));
+
+   /*** Now remove an element that doesn't exist ***/
+   set_remove(strings, "4444");
+   test_truth(set_elements(strings) == 3);
+   test_truth(set_contains(strings, s1));
+   test_truth(set_contains(strings, s2));
+   test_truth(set_contains(strings, s3));
+
+   /*** Remove elements that do exist ***/
+   set_remove(strings, s2);
+   test_truth(set_elements(strings) == 2);
+   test_truth(set_contains(strings, s1));
+   test_truth(!set_contains(strings, s2));
+   test_truth(set_contains(strings, s3));
+
+   set_remove(strings, s1);
+   test_truth(set_elements(strings) == 1);
+   test_truth(!set_contains(strings, s1));
+   test_truth(!set_contains(strings, s2));
+   test_truth(set_contains(strings, s3));
+
+   set_remove(strings, s3);
+   test_truth(set_elements(strings) == 0);
+   test_truth(!set_contains(strings, s1));
+   test_truth(!set_contains(strings, s2));
+   test_truth(!set_contains(strings, s3));
+
+   /*** Add an element and then destroy the set - just to catch memory problems ***/
+   test_truth(set_insert(strings, s1));
+   set_destroy(strings);
+
+
+   /***** Short test for non-dynamic elements *****/
+   { char a = 'a', b = 'b', c = 'c';
+     test_truth(set_create(&chars, NULL, NULL, sizeof(char)));
+     test_truth(set_insert(chars, &a));
+     test_truth(set_insert(chars, &c));
+     test_truth(set_insert(chars, &b));
+     test_truth(set_elements(chars) == 3);
+     test_truth(set_contains(chars, &a));
+     test_truth(set_contains(chars, &b));
+     test_truth(set_contains(chars, &c));
+     set_destroy(chars);
+   }
+ }
+
+static void violate_precondition(unsigned conditionno)
+ {
+ }
+
+
+const static char errmess[] =
+  "Please give a single integer (0-0) as the program argument\n"
+  "0 tests list module, /** 1-?? test various debugging routines**/";
+
+int main(int argc, char *argv[])
+ { unsigned code;
+
+   if (argc != 2)
+    { puts(errmess);
+      return EXIT_FAILURE;
+    }
+   errno = 0;
+   code = (unsigned) strtoul(argv[1], NULL, 10);
+   if (code > 0 || errno == ERANGE)
+    { puts(errmess);
+      return EXIT_FAILURE;
+    }
+   if (code == 0)
+    { check_functionality();
+      puts("All is well - remember to check with NDEBUG defined and not defined");
+    }
+   else
+    { violate_precondition(code);
+    }
+   return EXIT_SUCCESS;
+ }

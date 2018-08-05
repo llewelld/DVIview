@@ -1,0 +1,35 @@
+/*** line_processor.h ***/
+/* Declaration of a general system for processing lines
+ * (c) Paul Field
+ * v1.00 - 21/11/95
+ */
+
+#ifndef line_processor_h
+#define line_processor_h
+
+
+typedef unsigned long colour;
+ /* A colour is a 24 bit number which, when considered as three 8-bit bytes,
+  * gives a colour as BGR (i.e. the red component is the lowest 8 bits)
+  */
+
+
+typedef struct line_processor_str
+ { void (*initialise)(void);
+   void (*add_line)(colour c, int x0, int y0, int x1, int y1);
+   void (*finished)(void);
+ }line_processor;
+
+/* A line processor is a general framework for processing lines. It should be
+ * used like this:
+ *
+ * void f(const line_processor *lines)
+ *  { lines->initialise();
+ *    ......
+ *    various calls to lines->add_line()
+ *    ......
+ *    lines->finished();
+ *  }
+ */
+
+#endif

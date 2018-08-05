@@ -1,0 +1,16 @@
+/*** bstream_error.h ***/
+/* Create exceptions for byte_stream errors
+ */
+
+#include "byte_stream.h"
+
+
+const char* byte_stream_error(const byte_stream* stream, const char* type, const char* description_tag);
+ /* Returns a message along the lines of:
+  *   <description> in <type> file '<filename>'
+  * <description> is looked up in the messages file using description_tag
+  */
+
+void byte_stream_error_throw(const byte_stream* stream, const char* type, const char* description_tag);
+ /* Throws a string exception containing the result of byte_stream_error(stream, type, description_tag)
+  */

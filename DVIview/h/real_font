@@ -1,0 +1,114 @@
+/*** real_font.h ***/
+/* Data structure for 'real' (i.e. non-virtual) fonts
+ * (c) Paul Field 1996
+ */
+
+#ifndef _real_font_h
+#define _real_font_h
+
+#include "bool.h"
+
+
+typedef struct real_font_str real_font;
+
+
+real_font* real_font_construct
+ ( const char* font_name,
+   int         size,
+   double      dvi_to_1e7_metres,
+   unsigned    checksum,
+   const char* error_source
+ );
+ /* Pre: font_name    != NULL
+  *      error_source != NULL
+  *
+  * Creates a font object for the non-virtual font 'font_name'.
+  *
+  * size is the size of the font in dvi units
+  * dvi_to_1e7_m converts dvi units to 1e-7 ths of a metre.
+  *
+  * checksum is the font checksum (read from a font table)
+  *
+  * error_source is a string describing the context of the font for error-reporting purposes (for example, it could
+  * be the dvi filename).
+  */
+
+
+void real_font_destruct(real_font* font);
+ /* Frees all the memory associated with font
+  * (font may be NULL)
+  */
+
+
+bool real_font_char_is_valid(const real_font* font, unsigned char c);
+ /* Pre: font != NULL
+  *
+  * Returns TRUE iff c is a valid character in the font
+  */
+
+
+int real_font_char_width(const real_font* font, unsigned char c);
+ /* Pre: font != NULL
+  *      real_font_char_is_valid(font, c)
+  *
+  * Returns the width of character 'c' in DVI Units
+  */
+
+
+const char* real_font_render_name(const real_font* font);
+ /* Pre: font != NULL
+  * Exceptions: none
+  *
+  * Returns the name of the system font that should be
+  * used to render the font.
+  */
+
+
+int real_font_x_size(const real_font* font);
+ /* Pre: font != NULL
+  * Exceptions: none
+  *
+  * Returns the horizontal size of the font in 1/640 ths of a point
+  */
+
+
+int real_font_y_size(const real_font* font);
+ /* Pre: font != NULL
+  * Exceptions: none
+  *
+  * Returns the vertical size of the font in 1/640 ths of a point
+  */
+
+
+void real_font_string_bounds(const real_font* font, const unsigned char* s, unsigned length, int* height, int* depth);
+ /* Pre: font != NULL
+  *      s != NULL
+  *      height != NULL
+  *      depth != NULL
+  *      s is a string of length characters possibly including the null character
+  *      (0 is not considered a terminator in this context)
+  *      for all 0 <= i < length : real_font_char_is_valid(font, s[i])
+  *
+  * Returns the maximum distance (in DVI units) that characters in s reach above
+  * and below the font baseline in height and depth respectively
+  */
+
+void real_font_remap_string(const real_font* font, unsigned char* s, unsigned length);
+ /* Pre: font != NULL
+  *      s != NULL
+  *      s is a string of length characters possibly including the null character
+  *      (0 is not considered a terminator in this context)
+  *      for all 0 <= i < length : real_font_char_is_valid(font, s[i])
+  *
+  * Remaps the characters in s so they can be rendered using the operating system
+  * font returned by real_font_render_name()
+  */
+
+
+#ifndef NDEBUG
+void real_font_debug_output(const real_font* font);
+#else
+#define real_font_debug_output(font)
+#endif
+
+#endif

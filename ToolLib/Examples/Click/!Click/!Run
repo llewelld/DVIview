@@ -1,0 +1,34 @@
+| !Run file for !Click
+| (c) Paul Field/Andrew Ellis
+
+IconSprites <Obey$Dir>.!Sprites
+
+Set Click$Dir <Obey$Dir>
+
+RMEnsure UtilityModule 3.10 Error !Click can only be run on RISC OS 3.10 or later
+
+RMEnsure FilterManager 0.09 RMLoad System:modules.FilterMgr
+RMEnsure FilterManager 0.09 Error You need filter manager 0.09 or later to run !Click
+
+RMEnsure BorderUtils 0.02 RMEnsure WindowManager 3.17  RMLoad System:modules.BorderUtil
+
+RMEnsure Toolbox    0.00  RMLOAD System:modules.toolbox.toolbox
+RMEnsure Toolbox    1.23  ERROR You need toolbox 1.23 or later to run !Click
+RMEnsure Window     0.00  RMLOAD System:modules.toolbox.window
+RMEnsure Window     1.15  ERROR You need window 1.15 or later to run !Click
+RMEnsure Menu       0.00  RMLOAD System:modules.toolbox.menu
+RMEnsure Menu       0.15  ERROR You need menu 0.15 or later to run !Click
+RMEnsure Iconbar    0.00  RMLOAD System:modules.toolbox.iconbar
+RMEnsure Iconbar    1.08  ERROR You need iconbar 1.08 or later to run !Click
+RMEnsure ProgInfo   0.00  RMLOAD System:modules.toolbox.proginfo
+RMEnsure ProgInfo   0.05  ERROR You need proginfo 0.05 or later to run !Click
+RMEnsure ColourDbox 0.00  RMLOAD System:modules.toolbox.colourdbox
+RMEnsure ColourDbox 0.03  ERROR You need colourdbox 0.03 or later to run !Click
+
+WimpSlot -min 32k -max 32k
+If "<Click$Running>" <> "" then Error !Click is already running
+Set Click$Running Yes
+
+Run <Click$Dir>.!RunImage
+
+unset Click$Running

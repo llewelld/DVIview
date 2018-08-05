@@ -1,0 +1,277 @@
+/* testqueue.c */
+/* A test harness for the queue ADT
+ * (c) Paul Field
+ * V1.00 - 27/4/1994
+ * V1.01 - 25/5/1994 - queue interface changed
+ * V1.10 - 15/7/1995 - queue pointers now used
+ */
+
+#include "queue.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
+
+static void _test_truth(const char *expression, bool value, unsigned line)
+ { if (!value)
+    { printf("line %u: %s is not true\n", line, expression);
+      exit(EXIT_FAILURE);
+    }
+ }
+
+#define test_truth(a) _test_truth(#a, a, __LINE__)
+
+/* This is a test harness and the only aspect of quality that
+ * matters is that every queue function is thoroughly tested,
+ * thus I happily use test_truth to check things like memory allocation
+ */
+
+
+static void check_functionality(void)
+ { int *one, *two, *three;
+   queue *q;
+   queue_ptr qptr1, qptr2;
+
+   test_truth((one   = queue_alloc_element(sizeof(int))) != NULL);
+   test_truth((two   = queue_alloc_element(sizeof(int))) != NULL);
+   test_truth((three = queue_alloc_element(sizeof(int))) != NULL);
+   *one   = 1;
+   *two   = 2;
+   *three = 3;
+
+   /**** Check queue_is_empty ****/
+   test_truth(queue_create(&q));
+   test_truth(queue_is_empty(q));
+   queue_add_front(q, one);
+   test_truth(!queue_is_empty(q));
+   queue_add_front(q, two);
+   test_truth(!queue_is_empty(q));
+
+   /**** Check queue_add_front (already called)/queue_remove_front (q = [2,1]) ****/
+   test_truth(queue_remove_front(q) == two);
+   test_truth(queue_remove_front(q) == one);
+   test_truth(queue_is_empty(q));
+
+   /**** Check queue_add_end (q = []) ****/
+   queue_add_end(q, one);     /* Add to empty queue */
+   queue_add_end(q, two);     /* Add to non-empty queue */
+   test_truth(queue_remove_front(q) == one);
+   test_truth(queue_remove_front(q) == two);
+
+   /**** Check queue_remove_end (q = []) ****/
+   queue_add_front(q, one);
+   queue_add_front(q, two);
+   test_truth(queue_remove_end(q) == one);
+   test_truth(queue_remove_end(q) == two);
+   test_truth(queue_is_empty(q));
+
+   /**** Check queue_ptr_front/queue_ptr_end (q = []) ****/
+   /* Test on empty queue */
+   test_truth(queue_ptr_front(q) == NULL);
+   test_truth(queue_ptr_end(q) == NULL);
+
+   /* Test on non-empty queue */
+   queue_add_front(q, two);
+   queue_add_front(q, one);
+   test_truth(queue_ptr_element(queue_ptr_front(q)) == one);
+   test_truth(queue_ptr_element(queue_ptr_end(q)) == two);
+
+   /**** Check queue_ptr_before (q = [1,2]) ****/
+   qptr1 = queue_ptr_before(queue_ptr_end(q));
+   test_truth(qptr1 != NULL);
+   test_truth(queue_ptr_element(qptr1) == one);
+   test_truth(queue_ptr_before(qptr1) == NULL);
+
+   /**** Check queue_ptr_behind (q = [1,2]) ****/
+   qptr1 = queue_ptr_behind(queue_ptr_front(q));
+   test_truth(qptr1 != NULL);
+   test_truth(queue_ptr_element(qptr1) == two);
+   test_truth(queue_ptr_behind(qptr1) == NULL);
+
+
+   /**** Check queue_ptr_element ****/
+   /* The checks on queue_ptr_before/behind etc. have
+    * also checked queue_ptr_element
+    */
+
+   /**** Check queue_add_before_ptr (q = [1,2]) ****/
+   /* Check add at front */
+   qptr1 = queue_ptr_front(q);
+   queue_add_before_ptr(q, qptr1, three);         /* q = [3,1,2] */
+   qptr2 = queue_ptr_before(qptr1);
+   test_truth(qptr2 != NULL);
+   test_truth(queue_ptr_element(qptr1) == one);
+   test_truth(queue_ptr_element(qptr2) == three);
+   queue_remove_front(q);
+
+   /* Check add when not at front (q = [1,2]) */
+   qptr1 = queue_ptr_end(q);
+   queue_add_before_ptr(q, qptr1, three);         /* q = [1,3,2] */
+   qptr2 = queue_ptr_before(qptr1);
+   test_truth(qptr2 != NULL);
+   test_truth(queue_ptr_element(qptr1) == two);
+   test_truth(queue_ptr_element(qptr2) == three);
+   queue_remove_front(q);
+
+   /**** Check queue_add_behind_ptr (q = [3,2]) ****/
+   /* Check add at end */
+   qptr1 = queue_ptr_end(q);
+   queue_add_behind_ptr(q, qptr1, one);         /* q = [3,2,1] */
+   qptr2 = queue_ptr_behind(qptr1);
+   test_truth(qptr2 != NULL);
+   test_truth(queue_ptr_element(qptr1) == two);
+   test_truth(queue_ptr_element(qptr2) == one);
+   queue_remove_end(q);
+
+   /* Check add when not at end (q = [3,2]) */
+   qptr1 = queue_ptr_front(q);
+   queue_add_behind_ptr(q, qptr1, one);         /* q = [3,1,2] */
+   qptr2 = queue_ptr_behind(qptr1);
+   test_truth(qptr2 != NULL);
+   test_truth(queue_ptr_element(qptr1) == three);
+   test_truth(queue_ptr_element(qptr2) == one);
+
+   /**** Check queue_ptr_remove (q = [3,1,2]) ****/
+   /* Check remove from middle */
+   qptr1 = queue_ptr_front(q);
+   qptr2 = queue_ptr_behind(qptr1);
+   test_truth(qptr2 != NULL);
+   test_truth(queue_ptr_remove(q, qptr2) == one);         /* q = [3,2] */
+   test_truth(queue_ptr_element(qptr1) == three);
+   qptr2 = queue_ptr_behind(qptr1);
+   test_truth(qptr2 != NULL);
+   test_truth(queue_ptr_element(qptr2) == two);
+   test_truth(queue_ptr_behind(qptr2) == NULL);
+   test_truth(queue_ptr_before(qptr1) == NULL);
+
+   /* Check remove from end (q= [3,2]) */
+   qptr1 = queue_ptr_end(q);
+   test_truth(queue_ptr_remove(q, qptr1) == two);         /* q = [3] */
+   qptr1 = queue_ptr_end(q);
+   test_truth(queue_ptr_element(qptr1) == three);
+   qptr2 = qptr1;
+   test_truth(queue_ptr_behind(qptr2) == NULL);
+   test_truth(queue_ptr_before(qptr1) == NULL);
+
+   /* Check remove from front (q= [3]) */
+   qptr1 = queue_ptr_front(q);
+   test_truth(queue_ptr_remove(q, qptr1) == three);         /* q = [] */
+   test_truth(queue_is_empty(q));
+
+
+   /**** 'check' queue_free_element & queue_destroy ****/
+   queue_free_element(one);
+   queue_free_element(two);
+   queue_add_front(q, three);
+   queue_destroy(q);  /* Should also free 'three' */
+ }
+
+static void violate_precondition(unsigned conditionno)
+ { queue *q, *q2, *emptyq, *notcreatedq;
+   queue_ptr qptr, qptr_notinqueue, qptr_bogus;
+   int *one, *two, *three;
+   int *bogus;
+   int *notinqueue;
+
+   test_truth((one   = queue_alloc_element(sizeof(int))) != NULL);
+   test_truth((two   = queue_alloc_element(sizeof(int))) != NULL);
+   test_truth((three = queue_alloc_element(sizeof(int))) != NULL);
+   test_truth((bogus = malloc(sizeof(int))) != NULL);
+   test_truth((notinqueue = queue_alloc_element(sizeof(int))) != NULL);
+
+   *one = 1; *two = 2; *three = 3;
+   test_truth(queue_create(&q));
+   queue_add_front(q, two);
+   queue_add_front(q, one);
+   test_truth(queue_create(&emptyq));
+   test_truth(queue_create(&q2));
+   queue_add_front(q2, three);
+
+   queue_add_front(q2, notinqueue);
+   qptr_notinqueue = queue_ptr_front(q2);
+   queue_remove_front(q2);
+   qptr_bogus = (queue_ptr)bogus;
+
+   /* This list is not complete, it serves to test some of the main debugging routines */
+   /* but doesn't check that all the routines call the appropriate routines or perform */
+   /* the appropriate asserts (it does check some)                                     */
+   switch(conditionno)
+    { case 1:
+        puts("queue_free_element: freeing an element that's in a queue");
+        queue_free_element(one);
+      case 2:
+        puts("queue_add_front: element not allocated by queue_alloc_element");
+        queue_add_front(q, bogus);
+      case 3:
+        puts("queue_add_front: element already in queue");
+        queue_add_front(q, one);
+      case 4:
+        puts("queue_add_end: element not allocated by queue_alloc_element");
+        queue_add_end(q, bogus);
+      case 5:
+        puts("queue_add_end: element already in queue");
+        queue_add_end(q, one);
+      case 6:
+        puts("queue_remove_front: queue is empty");
+        queue_remove_front(emptyq);
+      case 7:
+        puts("queue_remove_end: queue is empty");
+        queue_remove_end(emptyq);
+      case 8:
+        puts("queue_ptr_before: qptr element not in a queue");
+        qptr = queue_ptr_before(qptr_notinqueue);
+      case 9:
+        puts("queue_ptr_before: qptr element not a queue element");
+        qptr = queue_ptr_before(qptr_notinqueue);
+      case 10:
+        puts("queue_ptr_behind: qptr element not in a queue");
+        qptr = queue_ptr_behind(qptr_notinqueue);
+      case 11:
+        puts("queue_ptr_element: qptr element not in a queue");
+        queue_ptr_element(qptr_notinqueue);
+      case 12:
+        puts("queue_add_before_ptr: qptr is not an element in q");
+        qptr = queue_ptr_front(q2);
+        queue_add_before_ptr(q, qptr, notinqueue);
+      case 13:
+        puts("Using a queue that hasn't been created. Problem may not get caught - depends on machine/compiler");
+        queue_is_empty(notcreatedq);
+      case 14:
+        puts("Using a queue that has been destroyed. Problem may not get caught - depends on machine/compiler");
+        queue_destroy(q);
+        queue_is_empty(q);
+      case 15:
+        puts("Various elements and queues have not been deallocated/destroyed");
+        /* Nothing - but we have not deallocated the elements & queues
+         * so we should get a debugging message
+         */
+    }
+ }
+
+
+const static char errmess[] =
+  "Please give a single integer (0-15) as the program argument\n"
+  "0 tests queue module, 1-15 test various debugging routines";
+
+int main(int argc, char *argv[])
+ { unsigned code;
+
+   if (argc != 2)
+    { puts(errmess);
+      return EXIT_FAILURE;
+    }
+   errno = 0;
+   code = (unsigned) strtoul(argv[1], NULL, 10);
+   if (code > 15 || errno == ERANGE)
+    { puts(errmess);
+      return EXIT_FAILURE;
+    }
+   if (code == 0)
+    { check_functionality();
+      puts("All is well - remember to check with NDEBUG defined and not defined");
+    }
+   else
+    { violate_precondition(code);
+    }
+   return EXIT_SUCCESS;
+ }

@@ -1,0 +1,31 @@
+/*** special.h ***/
+/* Processes special commands
+ * (c) Paul Field 1996
+ */
+
+#include "list.h"
+
+#include "font_set.h"
+
+
+void special_process(const char* special, const char* dvi_filename, const char* page, int x, int y, list* pic_list);
+ /* Pre: special != NULL  (should come from a DVI file xxxx (i.e. special) command)
+  *      dvi_filename is the full path of the dvi file
+  *      page is a description of the page the special command appears in (e.g. "Page 1")
+  *      (x,y) is the current page coordinate (in Draw units)
+  *      pic_list is a (possibly empty) list of pictures
+  * Post: pic_list may have new pictures added to the front of it
+  * Exceptions: exception_NO_MEMORY, exception_REPORTED, various command parsing errors, os exceptions
+  */
+
+
+void special_add_fonts_to_set(const char* special, const char* dvi_filename, const char* page, font_set* fonts);
+ /* Pre: special != NULL  (should come from a DVI file xxxx (i.e. special) command)
+  *      dvi_filename is the full path of the dvi file
+  *      page is a description of the page the special command appears in (e.g. "Page 1")
+  *      fonts != NULL
+  * Exceptions: exception_NO_MEMORY, exception_REPORTED, various command parsing errors, os exceptions
+  *
+  * Adds the fonts used in the special command (including fonts used in included pictures) to fonts.
+  * On exception the set may contain some fonts
+  */

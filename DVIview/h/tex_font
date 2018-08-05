@@ -1,0 +1,88 @@
+/** tex_font.h **/
+/* Data structure for document fonts
+ * (c) Paul Field 1995
+ */
+
+#ifndef _tex_font_h
+#define _tex_font_h
+
+#include "dviops.h"
+#include "font_set.h"
+#include "renderer.h"
+
+
+typedef struct tex_font_str tex_font;
+
+/* N.B. The tex_font data structure can be placed in lists
+ */
+
+
+tex_font* tex_font_construct(const parameters_font_def* font_def, double dvi_to_1e7_metres, const char* error_source);
+ /* Pre: font_def != NULL
+  *      error_source != NULL
+  * Exceptions: exception_NO_MEMORY
+  *
+  * Creates a tex font from the dvi font_def parameters.
+  * dvi_to_1e7_metres converts (by multiplication) dvi units into 1e-7m
+  * error_source is a string describing the context of the font for error-reporting purposes (for example, it could
+  * be the dvi filename).
+  */
+
+
+void tex_font_destruct(tex_font* tfont);
+ /* Frees all the memory associated with tfont
+  * (tfont may be NULL)
+  */
+
+
+bool tex_font_char_is_valid(const tex_font* tfont, unsigned char c);
+ /* Pre: tfont != NULL
+  *
+  * Returns TRUE iff c is a valid character in the font
+  */
+
+
+int tex_font_char_width(const tex_font* tfont, unsigned char c);
+ /* Pre: tfont != NULL
+  *      tex_font_char_is_valid(tfont, c)
+  *
+  * Returns the width of character 'c' in DVI Units
+  */
+
+
+int tex_font_number(const tex_font* tfont);
+ /* Pre: tfont != NULL
+  * Exceptions: none
+  *
+  * Returns the font number of tfont
+  */
+
+
+void tex_font_render(const tex_font* tfont, int x, int y, unsigned char c, const renderer* r);
+ /* Pre: tfont != NULL
+  *      r != NULL
+  *      tex_font_char_is_valid(tfont, c)
+  *
+  * Renders character c at position (x,y)
+  * (x,y) is in DVI units
+  */
+
+
+void tex_font_add_render_fonts_to_set(const tex_font* tfont, font_set* fonts);
+ /* Pre: tfont != NULL
+  *      fonts != NULL
+  * Exceptions: exception_NO_MEMORY
+  *
+  * Adds to fonts the system fonts needed to render characters from tfont.
+  * On exception the set may contain some fonts
+  */
+
+
+
+#ifndef NDEBUG
+void tex_font_debug_output(const tex_font* tfont);
+#else
+#define tex_font_debug_output(tfont)
+#endif
+
+#endif

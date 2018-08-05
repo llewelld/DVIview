@@ -1,0 +1,301 @@
+/** virtual_font.c **/
+/* Data structure for virtual fonts
+ * (c) Paul Field 1995
+ */
+
+#include "virtual_font.h"
+
+#include <stdio.h>
+#include <string.h>
+
+#include "allocate.h"
+#include "exception.h"
+#include "list.h"
+#include "message.h"
+
+#include "command_processor.h"
+#include "file_error.h"
+#include "font_file.h"
+
+
+
+struct virtual_font_str
+ { char*       name;
+   font_table* fonts;
+   list*       packets;
+   double      scale;
+ };
+
+
+
+
+typedef struct packet_str
+ { int          c;
+   int          width;
+   byte_stream* stream;
+   /* Followed by dvi command bytes */
+ }packet;
+
+
+
+/* Convert a big-endian sequence of bytes into an int */
+#define bytes_to_4(b) (((b)[0] << 24) | ((b)[1] << 16) | ((b)[2] <<  8) | (b)[3])
+#define bytes_to_unsigned_3(b) (((b)[0]*256 + (b)[1])*256 + (b)[2])
+
+
+
+
+static bool find_packet(const virtual_font* vfont, int c, packet** p)
+ { list_ptr ptr;
+
+   for (ptr = list_ptr_head(vfont->packets); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+    { *p = list_ptr_element(ptr);
+      if ((*p)->c == c)
+       { /* Found. Optimise virtual font by moving this char to the head of the packet list
+          * so it is found very quickly in future. There are two reasons for this:
+          *  1) Several routines are likely to be used on this char before any other chars
+          *     (e.g. is_valid() then render() then width() then move on to next char).
+          *  2) Over time, common letters (e.g. 'e' and 't' in English) will tend to be found
+          *     at the front of the list
+          */
+         list_ptr_remove_element(ptr);
+         list_cons(vfont->packets, *p);
+
+         return TRUE;
+       }
+    }
+   return FALSE;
+ }
+
+
+
+
+static void process_preamble(byte_stream* stream, const char* name)
+ { struct
+    { unsigned char pre_247;
+      unsigned char id_byte;
+      unsigned char comment_length;
+    }preamble;
+
+   byte_stream_read(stream, &preamble, 3);
+
+   if (preamble.pre_247 != 247)
+    { file_error_named_throw(name, "vf", "HeaderCorrupt");
+    }
+
+   if (preamble.id_byte != 202)
+    { file_error_named_throw(name, "vf", "VFBadVersion");
+    }
+
+   byte_stream_set_position(stream, 3 + preamble.comment_length + 8);
+ }
+
+
+
+
+static void packet_destruct(packet* p)
+ { if (p != NULL)
+    { byte_stream_destruct(p->stream);
+      list_free_element(p);
+    }
+ }
+
+
+
+
+static bool packet_construct(const char* name, byte_stream* stream, packet** p_ptr)
+ { byte    buffer[12];
+   byte    opcode;
+   size_t  length;
+   int     c;
+   int     width;
+   packet* p;
+
+   byte_stream_read(stream, &opcode, 1);
+   if (opcode > 242)
+    { assert(opcode == 248);
+      return FALSE;
+    }
+
+   if (opcode < 242)
+    { /* short_char packet */
+
+      length = opcode;
+      byte_stream_read(stream, buffer, 4);
+      c     = buffer[0];
+      width = bytes_to_unsigned_3(&buffer[1]);
+    }
+   else
+    { /* long_char packet */
+
+      byte_stream_read(stream, buffer, 12);
+      length = bytes_to_4(&buffer[0]);
+      c      = bytes_to_4(&buffer[4]);
+      width  = bytes_to_4(&buffer[8]);
+    }
+
+   /* Allocate packet for (c, length) */
+   p = list_alloc_element(sizeof(packet)+length);
+   p->stream = NULL;
+
+   /* Read in dvi command bytes */
+   try
+    { void* packet_bytes;
+
+      packet_bytes = (char*)p + sizeof(packet);
+
+      p->c      = c;
+      p->width  = width;
+      p->stream = byte_stream_construct_from_memory(packet_bytes, length, name);
+      byte_stream_read(stream, packet_bytes, length);
+    }
+   catch
+    { packet_destruct(p);
+      throw();
+    }
+   catch_end
+
+   *p_ptr = p;
+   return TRUE;
+ }
+
+
+
+
+virtual_font* virtual_font_construct(const char* font_name, int scale, double dvi_to_1e7_metres)
+ { virtual_font* vfont;
+
+   assert(font_name != NULL);
+
+   vfont = list_alloc_element(sizeof(virtual_font));
+   vfont->name    = NULL;
+   vfont->fonts   = NULL;
+   vfont->packets = NULL;
+
+   try
+    { byte_stream* vf_stream;
+
+      vfont->scale   = scale / (double) (1<<20);
+
+      /* Make a copy of the font's name */
+      vfont->name = memory_allocate(strlen(font_name)+1);
+      strcpy(vfont->name, font_name);
+
+      vf_stream = byte_stream_construct_from_file(font_file_name(font_name, "vf"));
+
+      try
+       { packet* p;
+
+         process_preamble(vf_stream, font_name);
+         vfont->fonts = font_table_load(vf_stream, dvi_to_1e7_metres);
+
+         /* Load character packets */
+         vfont->packets = list_create();
+
+         while (packet_construct(vfont->name, vf_stream, &p))
+          { list_cons(vfont->packets, p);
+          }
+       }
+      catch
+       { byte_stream_destruct(vf_stream);
+         throw();
+       }
+      catch_end
+
+      byte_stream_destruct(vf_stream);
+    }
+   catch
+    { virtual_font_destruct(vfont);
+      throw();
+    }
+   catch_end
+
+   return vfont;
+ }
+
+
+
+
+void virtual_font_destruct(virtual_font* vfont)
+ { if (vfont != NULL)
+    { if (vfont->packets)
+       { while(!list_is_empty(vfont->packets))
+          { packet_destruct(list_remove_head(vfont->packets));
+          }
+         list_destroy(vfont->packets);
+       }
+
+      font_table_destruct(vfont->fonts);
+      memory_free(vfont->name);
+      list_free_element(vfont);
+    }
+ }
+
+
+
+
+bool virtual_font_char_is_valid(const virtual_font* vfont, unsigned char c)
+ { packet* p;
+
+   assert(vfont != NULL);
+
+   return find_packet(vfont, c, &p);
+ }
+
+
+
+
+int virtual_font_char_width(const virtual_font* vfont, unsigned char c)
+ { packet* p;
+
+   assert(vfont != NULL);
+   assert(virtual_font_char_is_valid(vfont, c));
+
+   find_packet(vfont, c, &p);
+
+   return (int)(vfont->scale * p->width);
+ }
+
+
+
+
+void virtual_font_render(const virtual_font* vfont, unsigned char c, int x, int y)
+ { packet* p;
+
+   assert(vfont != NULL);
+   assert(virtual_font_char_is_valid(vfont, c));
+
+   NOT_USED(x);
+   NOT_USED(y);
+
+   find_packet(vfont, c, &p);
+
+   byte_stream_set_position(p->stream, 0);
+   command_processor_macro(vfont->fonts, p->stream, vfont->scale);
+ }
+
+
+
+
+void virtual_font_add_render_fonts_to_set(const virtual_font* vfont, font_set* fonts)
+ { assert(vfont != NULL);
+   assert(fonts != NULL);
+
+   font_table_add_fonts_to_set(vfont->fonts, fonts);
+ }
+
+
+
+
+#ifndef NDEBUG
+void virtual_font_debug_output(const virtual_font* vfont)
+ { fprintf
+    ( stderr,
+      "  Name = %s\n"
+      "  Scale = %f\n",
+      vfont->name,
+      vfont->scale
+    );
+   font_table_debug_output(vfont->fonts);
+ }
+#endif

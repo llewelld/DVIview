@@ -1,0 +1,156 @@
+/*** vp_side.c ***/
+
+#include "vp_side.h"
+
+#include <assert.h>
+#include <stdio.h>
+
+//#include "debug_io.h"
+#include "exception.h"
+
+
+enum { MaxPagesPerSide = 8 };
+
+
+
+static struct vp_side_str
+ { const print_doc* document;
+   unsigned         pages;
+   void*            page_handle[MaxPagesPerSide];
+   vp_area*         area[MaxPagesPerSide];
+ }side;
+
+
+
+
+static void vp_side_destruct(void)
+ { assert(side.document != NULL);
+
+   if (side.document->discard_page)
+    { unsigned page_index;
+
+      for (page_index = 0; page_index < side.pages; page_index++)
+       { side.document->discard_page(side.document->handle, side.page_handle[page_index]);
+       }
+    }
+
+   side.document = NULL;
+ }
+
+
+
+
+
+static void vp_side_declare(void)
+ { unsigned page_index;
+
+   for (page_index = 0; page_index < side.pages; page_index++)
+    { print_rect_declarer* declarer;
+
+#ifdef PRINT_VERBOSE
+         fprintf(stderr, " -- About to declare page with index %u\n", page_index);
+         debug_io_flush();
+#endif
+
+      declarer = vp_area_rectangle_declarer(side.area[page_index], page_index);
+      side.document->declare_page(side.document->handle, side.page_handle[page_index], declarer);
+    }
+ }
+
+
+
+
+static void vp_side_draw_pages(const os_box* clip, unsigned id)
+ { unsigned user_id;
+   unsigned page_index;
+
+   user_id    = id/vp_area_id_limit;
+   page_index = id%vp_area_id_limit;
+
+   assert(page_index < side.pages);
+
+#ifdef PRINT_VERBOSE
+   fprintf
+    ( stderr,
+      "print: requesting drawing of page handle %p : id = %u, clip rectangle (%d,%d),(%d,%d)\n",
+      side.page_handle[page_index],
+      user_id,
+      clip->x0,
+      clip->y0,
+      clip->x1,
+      clip->y1
+    );
+   debug_io_flush();
+#endif
+
+   side.document->draw_page(side.document->handle, side.page_handle[page_index], user_id, clip);
+ }
+
+
+
+
+void vp_side_construct
+ ( const print_doc*  document,
+   unsigned          num_abstract_pages,
+   const unsigned    abstract_page_number[],
+   vp_area*          area[]
+ )
+ { assert(document);
+   assert(abstract_page_number);
+   assert(area);
+   assert(side.document == NULL);
+
+#ifdef PRINT_VERBOSE
+    { unsigned page_index;
+
+      fputs("print: constructing side with pages: ", stderr);
+      for (page_index = 0; page_index < num_abstract_pages; page_index++)
+       { fprintf(stderr, "%u ", abstract_page_number[page_index]+1);
+       }
+      fputc('\n', stderr);
+    }
+   debug_io_flush();
+#endif
+
+
+   /* Initialise side, so it's OK to destruct it */
+   side.document = document;
+   side.pages    = 0;
+
+   try
+    { unsigned page_index;
+      unsigned pages;
+
+      pages = document->pages(document->handle);
+
+      /* Run through abstract pages and turn each into a real page if it exists */
+      for (page_index = 0; page_index < num_abstract_pages; page_index++)
+       { unsigned page_number;
+
+         page_number = abstract_page_number[page_index];
+         if (page_number < pages)
+          { /* Abstract page actually exists so add it to the side */
+
+            assert(side.pages < MaxPagesPerSide);
+
+            side.area       [side.pages] = area[page_index];
+            side.page_handle[side.pages] = document->get_page(document->handle, page_number);
+            side.pages++;
+          }
+       }
+    }
+   catch
+    { vp_side_destruct();
+      throw();
+    }
+   catch_end
+ }
+
+
+
+
+print_side vp_side =
+ { vp_side_declare,
+   vp_side_draw_pages,
+   vp_side_destruct
+ };

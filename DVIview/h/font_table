@@ -1,0 +1,69 @@
+/** font_table.h **/
+/* loads and manages the font table from a dvi or vf file
+ * (including loading tfm files)
+ * (c) Paul Field 1995
+ */
+
+#ifndef _font_table_h
+#define _font_table_h
+
+#include "bool.h"
+
+#include "font_set.h"
+#include "tex_font.h"
+
+
+typedef struct font_table_str font_table;
+
+
+font_table* font_table_load(byte_stream* stream, double dvi_to_1e7_metres);
+ /* Pre: stream != NULL
+  *      stream's pointer points to the font table (which can be empty)
+  *      dvi_to_1e7_metres converts (by multiplication) dvi units into 1e-7metres
+  * Post: stream's pointer points to the command immediately after the font table
+  * Exceptions: os exceptions
+  *
+  * Loads and returns a font table.
+  * (e.g. from a dvi file's postamble or from a vf file)
+  */
+
+
+void font_table_destruct(font_table* ft);
+ /* Frees the memory associated with a valid font_table
+  * (ft may be NULL)
+  */
+
+
+bool font_table_get_font(const font_table* ft, int font_no, const tex_font** tfont);
+ /* Pre: ft != NULL
+  *      tfont != NULL
+  *
+  * Returns in tfont the tex_font numbered font_no. Returns FALSE
+  * if there is no such font defined, TRUE otherwise.
+  */
+
+
+const tex_font* font_table_first_font(const font_table* ft);
+ /* Pre: ft != NULL
+  *
+  * Returns the first font in the font table (NULL if the font table contains no fonts)
+  */
+
+
+void font_table_add_fonts_to_set(const font_table* ft, font_set* fonts);
+ /* Pre: ft != NULL
+  *      fonts != NULL
+  * Exceptions: exception_NO_MEMORY
+  *
+  * Adds to fonts the system fonts needed to render all the fonts in ft.
+  * On exception the set may contain some fonts
+  */
+
+
+#ifndef NDEBUG
+void font_table_debug_output(const font_table* ft);
+#else
+#define font_table_debug_output(ft)
+#endif
+
+#endif

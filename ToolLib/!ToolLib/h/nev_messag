@@ -1,0 +1,64 @@
+/*** nev_message.h ***/
+/* Handle Wimp messages
+ * (c) Paul Field
+ * v1.00 - 24/5/1996
+ */
+
+/* In debugging mode, the module checks that the messages for which
+ * handlers are registered were included in the lists passed to
+ * nevent_message_initialise() (which should be the ones registered with the Toolbox).
+ * It will also output a list of all messages for which handlers were registered
+ * (for use as a message list).
+ */
+
+
+/* Notionally there is a set of tuples <message_number, handler, handle> called message_handlers.
+ * When a message M arrives, tuples whose message_number matches M's message number
+ * are selected and handler(M, handle) is called until a call returns nevent_HANDLED.
+ *
+ * Tuples are ordered in reverse order of their registration (i.e. most recently registered first).
+ */
+
+#include "nevent.h"
+
+
+/* A message number that indicates the handler should be called for any message */
+#define nevent_ALL_MESSAGES ((bits)(-1))
+
+
+typedef nevent_result (*nevent_message_handler)
+ ( wimp_message* message,
+   void*         handle
+ );
+
+
+
+void nevent_message_register_handler(bits message_num, nevent_message_handler handler, void* handle);
+ /* Pre:  handler != NULL
+  *       message_num may equal nevent_ALL_MESSAGES
+  *       <message_num, handler, handle> is not a member of message_handlers
+  * Post: message_handlers == old_message_handlers UNION { <message_num, handler, handle> }
+  * Exceptions: exception_NO_MEMORY
+  *
+  * Registers 'handler' as a function to be called when the Wimp message
+  * 'message_num' is received.
+  * 'handle' is a value which will be passed  to 'handler' and so can
+  * associate a data structure with the message.
+  */
+
+
+void nevent_message_deregister_handler(bits message_num, nevent_message_handler handler, void* handle);
+ /* Pre:  <message_num, handler, handle> is an element of message_handlers
+  * Post: message_handlers == old_message_handlers - { <message_num, handler, handle> }
+  * Exceptions: none
+  *
+  * De-registers 'handler'.
+  */
+
+
+void nevent_message_initialise(const wimp_message_list* messages);
+ /* Exceptions: exception_NO_MEMORY
+  *
+  * Sets up the message handling system - call this before any other routines in this file.
+  * 'messages' should be the message list passed to toolbox_initialise().
+  */

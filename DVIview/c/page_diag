@@ -1,0 +1,518 @@
+/**** page_diag.c ****/
+/* Functions for creating a diagram corresponding to a page
+ * A page_diagram is secretly a pointer to a draw diagram
+ * (c) Paul Field 1995
+ */
+
+#include "page_diag.h"
+
+#include <assert.h>
+#include <stddef.h>
+#include <string.h>
+
+/* Needed for debugging only */
+#include <stdio.h>
+//#include "debug_io.h"
+
+
+#include "drawfile.h"
+#include "macros.h"
+
+#include "box.h"
+#include "exception.h"
+#include "shifting.h"
+
+#include "draw_utils.h"
+
+
+enum
+ { exception_TooManyFonts = 0x400
+ };
+
+
+/* A page diagram is simply the anchor for a (shifting) drawfile diagram */
+
+struct page_diagram_str
+ { drawfile_diagram* diagram;
+ };
+
+
+
+
+/* Sets the tag field of a draw_path_element, setting the reserved fields to 0 */
+#define page_diagram_SetElementTag(element, tag_value) (*(int *)(&(element)->tag) = (tag_value))
+
+
+enum
+ { StringMaxLength = 50
+ };
+
+enum
+ { BufferInitialSize    = 256*1024,  /* initial size of draw diagram buffer (if possible) */
+   BufferMinInitialSize =   2*1024,  /* minimum initial size of draw diagram buffer */
+   BufferExtendSize     =  32*1024,  /* extend buffer in blocks of this size */
+   FontBufferSize       =   1*1024,  /* initial size of font table buffer (must be < BufferMinInitialSize) */
+   FontBufferExtendSize =   1*1024   /* extend font buffer in blocks of this size */
+ };
+
+
+
+static struct
+ { unsigned char    buffer[StringMaxLength+1];
+   unsigned         length;
+   int              v;           /* Vertical position of start of string (DVI units) */
+   int              left_h;      /* Left and right horizontal bounds of the string (DVI units) */
+   int              right_h;
+   const real_font* font;        /* The string's font */
+   double           scale;
+   double           scaled_dvi_to_draw;
+ }string;
+
+static double dvi_to_draw;
+static double scale;
+static double scaled_dvi_to_draw;
+static byte   next_font_index;
+
+/* During creation, the draw diagram is stored with a gap between the font table (which is the
+ * first object) and the rest of the objects
+ */
+
+static drawfile_diagram** diagram;  /* NULL if no diagram is being created */
+static unsigned font_table_free;    /* Offset to next free entry in draw font table */
+static unsigned diagram_start;      /* Offset to first 'real' object (i.e. not the font table) */
+static unsigned diagram_length;     /* length of the draw diagram */
+static bool     first_bbox;         /* TRUE if no object bounding boxes have been registered yet */
+
+
+static void page_diagram_ensure_space(drawfile_diagram** diagram, size_t space)
+ { if (diagram_length + space > shifting_size((shifting_ptr)diagram))
+    { shifting_alter_size((shifting_ptr)diagram, diagram_length + space + BufferExtendSize);
+    }
+ }
+
+
+
+
+static void page_diagram_shift(int bytes)
+ { char* diagram_start_addr;
+
+   assert(shifting_size((shifting_ptr)diagram) >= diagram_length + bytes);
+   assert((int) diagram_start + bytes >= font_table_free);
+
+   diagram_start_addr = (char*)(*diagram) + diagram_start;
+
+   memmove(diagram_start_addr + bytes, diagram_start_addr, diagram_length-diagram_start);
+   diagram_start  += bytes;
+   diagram_length += bytes;
+ }
+
+
+
+#pragma no_check_stack
+static void page_diagram_register_bbox(const os_box* bbox)
+ { if (first_bbox)
+    { (*diagram)->bbox = *bbox;
+      first_bbox = FALSE;
+    }
+   else
+    { box_bounds(&(*diagram)->bbox, bbox, &(*diagram)->bbox);
+    }
+ }
+#pragma check_stack
+
+
+
+
+static byte page_diagram_get_font_number(const real_font* font)
+ { const char*              name;
+   size_t                   font_def_size;
+   drawfile_font_def*       font_def;
+   byte*                    raw_font_def;
+   byte*                    raw_free_font_def;
+   drawfile_object*         font_table_object;
+
+   name = real_font_render_name(font);
+   font_def_size = drawfile_SIZEOF_FONT_DEF(strlen(name)+1);
+
+   /* See if font is already in the font table */
+   font_table_object = draw_object_at(diagram, offsetof(drawfile_diagram, objects));
+   raw_font_def = (byte*)font_table_object->data.font_table.font_def;  /* First font definition */
+   raw_free_font_def = draw_item_at(diagram, font_table_free);          /* The next font def to be filled in */
+
+   while(raw_font_def < raw_free_font_def)
+    { font_def = (drawfile_font_def*) raw_font_def;
+
+      if (strcmp(font_def->font_name, name) == 0)
+       { return font_def->font_index;
+       }
+
+      raw_font_def += drawfile_SIZEOF_FONT_DEF(strlen(font_def->font_name)+1);
+    }
+
+
+   if (font_table_free + font_def_size > diagram_start)
+    { /* Not enough room in font table - make room at the end of the diagram and then
+       * shove everything up. This is better than flex_midextend() because we may already
+       * have enough room at the end of the diagram in which case we avoid moving other flex blocks
+       */
+       size_t extension;
+
+       extension = font_def_size + FontBufferExtendSize;
+       page_diagram_ensure_space(diagram, extension);
+       page_diagram_shift(extension);
+    }
+
+   assert(font_table_free + font_def_size <= diagram_start);
+
+//   if (next_font_index >= 256)
+//    { throw_user(exception_TooManyFonts);
+//    }
+
+   font_def = (drawfile_font_def*)draw_item_at(diagram, font_table_free);
+   font_def->font_index = next_font_index++;
+   strncpy(font_def->font_name, name, font_def_size+1);
+   font_table_free += font_def_size;
+   return font_def->font_index;
+ }
+
+
+
+
+static void page_diagram_put_string_buffer(void)
+ { unsigned         aligned_string_size;
+   size_t           text_object_size;
+   drawfile_object* text_object;
+   drawfile_text*   text;
+   int              height;
+   int              depth;
+   byte             draw_font_no;
+   unsigned         font_x_size;
+   unsigned         font_y_size;
+
+   assert(string.length > 0 && string.length <= StringMaxLength);
+   assert(string.left_h <= string.right_h);
+
+   aligned_string_size = ALIGN(string.length+1);
+   text_object_size = drawfile_SIZEOF_TEXT(aligned_string_size) + 2*sizeof(int)/*tag+size*/;
+
+   page_diagram_ensure_space(diagram, text_object_size);
+
+   draw_font_no = page_diagram_get_font_number(string.font);
+
+   real_font_string_bounds(string.font, string.buffer, string.length, &height, &depth);
+   real_font_remap_string(string.font, string.buffer, string.length);
+
+   /* Terminate string */
+   string.buffer[string.length] = '\0';
+
+   font_x_size = (unsigned)(real_font_x_size(string.font) * string.scale);
+   font_y_size = (unsigned)(real_font_y_size(string.font) * string.scale);
+
+
+   text_object = draw_object_at(diagram, diagram_length);
+   text_object->type = drawfile_TYPE_TEXT;
+   text_object->size = text_object_size;
+   text = &text_object->data.text;
+   text->bbox.x0 = (int)(string.left_h * string.scaled_dvi_to_draw);
+   text->bbox.x1 = (int)(string.right_h  * string.scaled_dvi_to_draw);
+   text->bbox.y0 = (int)((-string.v - depth)  * string.scaled_dvi_to_draw);
+   text->bbox.y1 = (int)((-string.v + height) * string.scaled_dvi_to_draw);
+   text->fill    = os_COLOUR_BLACK;
+   text->bg_hint = os_COLOUR_WHITE;
+   text->style.font_index = draw_font_no;
+   text->style.reserved[0] = 0;
+   text->style.reserved[1] = 0;
+   text->style.reserved[2] = 0;
+   text->xsize = font_x_size;
+   text->ysize = font_y_size;
+   text->base.x = text->bbox.x0;
+   text->base.y = (int)(-string.v * string.scaled_dvi_to_draw);
+   strncpy(text->text, (char*)string.buffer, aligned_string_size);
+   assert(text->text + aligned_string_size == (char *)text_object + text_object_size);
+   page_diagram_register_bbox(&text->bbox);
+
+   diagram_length += text_object_size;
+   string.length = 0;
+ }
+
+
+
+
+page_diagram* page_diagram_construct(double new_dvi_to_draw)
+ { page_diagram*     new_diagram;
+   drawfile_diagram* d;
+   drawfile_object*  font_table_object;
+
+   assert(diagram == NULL);
+
+   new_diagram = memory_allocate(sizeof(struct page_diagram_str));
+   new_diagram->diagram = NULL;
+
+   try
+    { /* Try to allocate a large buffer but make do with a small one if necessary */
+      try
+       { shifting_allocate((shifting_ptr)&new_diagram->diagram, BufferInitialSize);
+       }
+      catch
+       { shifting_allocate((shifting_ptr)&new_diagram->diagram, BufferMinInitialSize);
+       }
+      catch_end
+
+      dvi_to_draw        = new_dvi_to_draw;
+      scaled_dvi_to_draw = new_dvi_to_draw;
+      scale              = 1.0;
+
+      diagram = &new_diagram->diagram;
+
+      d = new_diagram->diagram;
+
+      memcpy(d->tag, "Draw", 4);
+      d->major_version = 201;
+      d->minor_version = 0;
+      memcpy(d->source, "DVIview     ", 12);
+
+      font_table_object = draw_object_at(&d, offsetof(drawfile_diagram, objects));
+      font_table_object->type = drawfile_TYPE_FONT_TABLE;
+      font_table_object->size = 8;
+
+      font_table_free = offsetof(drawfile_diagram, objects) + 8;
+      diagram_start  = font_table_free + FontBufferSize;
+      diagram_length = diagram_start;
+      first_bbox = TRUE;
+      next_font_index = 1;
+      assert(diagram_length <= shifting_size((shifting_ptr)&new_diagram->diagram));
+
+      string.length = 0;
+    }
+   catch
+    { memory_free(new_diagram);
+      throw();
+    }
+   catch_end
+
+   return new_diagram;
+ }
+
+
+
+
+void page_diagram_set_scale(double new_scale)
+ { assert(diagram);
+
+   scale = new_scale;
+   scaled_dvi_to_draw = new_scale * dvi_to_draw;
+ }
+
+
+
+
+double page_diagram_get_scale(void)
+ { assert(diagram);
+
+   return scale;
+ }
+
+
+
+
+void page_diagram_destruct(page_diagram* pdiag)
+ { if (pdiag != NULL)
+    { assert(diagram == NULL || diagram == &pdiag->diagram);
+      if (diagram == &pdiag->diagram)
+       { diagram = NULL;
+         string.length = 0;
+         diagram_length = 0;
+       }
+      shifting_free((shifting_ptr)&pdiag->diagram);
+      memory_free(pdiag);
+    }
+ }
+
+
+
+
+void page_diagram_finish(void)
+ { drawfile_object* font_table_object;
+
+   assert(diagram);
+
+   if (string.length != 0)
+    { page_diagram_put_string_buffer();
+    }
+
+
+   /* Finish font table: pad to word boundary with 0s then fill in size */
+   while (font_table_free % 4 != 0)
+    { *((char *)(*diagram)+font_table_free) = 0;
+      font_table_free++;
+    }
+
+   font_table_object = draw_object_at(diagram, offsetof(drawfile_diagram, objects));
+   assert(font_table_object->type == drawfile_TYPE_FONT_TABLE);
+   font_table_object->size = font_table_free - offsetof(drawfile_diagram, objects);
+
+   page_diagram_shift(font_table_free - diagram_start);
+   assert(diagram_start == font_table_free);
+
+   /* Shouldn't fail because we are making the block smaller */
+   shifting_alter_size((shifting_ptr)diagram, diagram_length);
+
+   diagram = NULL;
+   diagram_length = 0;
+ }
+
+
+
+
+void page_diagram_put_char(const real_font* font, int h, int v, unsigned char c)
+ { assert(string.length <= StringMaxLength);
+   assert(string.left_h <= string.right_h);
+   assert(diagram);
+   assert(real_font_char_is_valid(font, c));
+
+   if (string.length == 0)
+    { string.left_h             = h;
+      string.scale              = scale;
+      string.scaled_dvi_to_draw = scaled_dvi_to_draw;
+    }
+   else
+    { if (string.length >= StringMaxLength || string.right_h != h || string.v != v || string.font != font || string.scale != scale)
+       { page_diagram_put_string_buffer();
+         string.left_h             = h;
+         string.scale              = scale;
+         string.scaled_dvi_to_draw = scaled_dvi_to_draw;
+       }
+    }
+
+   string.right_h = h + real_font_char_width(font, c);
+   string.v = v;
+   string.font = font;
+
+   string.buffer[string.length++] = c;
+ }
+
+
+
+
+void page_diagram_put_rule(int h, int v, int width, int height)
+ { enum
+    { rule_object_size = sizeof(drawfile_path) - sizeof(draw_path) + 2*sizeof(int)/*tag+size*/
+                         + 3*sizeof(int) + 2*sizeof(os_coord)
+    };
+
+   drawfile_object*   rule_object;
+   drawfile_path*     rule;
+   draw_path_element* element;
+
+   assert(diagram);
+
+   page_diagram_ensure_space(diagram, rule_object_size);
+
+   h = (int)(h * scaled_dvi_to_draw);
+   v = (int)(-v * scaled_dvi_to_draw);
+   width  = (int)(width  * scaled_dvi_to_draw);
+   height = (int)(height * scaled_dvi_to_draw);
+
+   rule_object = draw_object_at(diagram, diagram_length);
+
+   rule_object->type = drawfile_TYPE_PATH;
+   rule_object->size = rule_object_size;
+   rule = &rule_object->data.path;
+   rule->bbox.x0 = h;
+   rule->bbox.x1 = h + width;
+   rule->bbox.y0 = v;
+   rule->bbox.y1 = v + height;
+   rule->fill    = os_COLOUR_TRANSPARENT;
+   rule->outline = os_COLOUR_BLACK;
+   rule->width = height;
+   rule->style.flags = (drawfile_PATH_MITRED << drawfile_PATH_JOIN_SHIFT)  |
+                       (drawfile_PATH_BUTT   << drawfile_PATH_END_SHIFT)   |
+                       (drawfile_PATH_BUTT   << drawfile_PATH_START_SHIFT) |
+                       drawfile_PATH_WINDING_EVEN_ODD;
+   rule->style.reserved = 0;
+   rule->style.cap_width = 0;
+   rule->style.cap_length = 0;
+   element = rule->path.elements;
+   page_diagram_SetElementTag(element, draw_MOVE_TO);
+   element->data.move_to.x = h;
+   element->data.move_to.y = v + height/2;
+   element = (draw_path_element *)((char *)element + sizeof(int) + sizeof(os_coord));
+   page_diagram_SetElementTag(element, draw_LINE_TO);
+   element->data.line_to.x = h + width;
+   element->data.line_to.y = v + height/2;
+   element = (draw_path_element *)((char *)element + sizeof(int) + sizeof(os_coord));
+   page_diagram_SetElementTag(element, draw_END_PATH);
+   assert ((char *)element + sizeof(int) == (char *)rule_object + rule_object_size);
+   page_diagram_register_bbox(&rule->bbox);
+
+   diagram_length += rule_object_size;
+ }
+
+
+
+
+void page_diagram_draw(const page_diagram* pdiag, int x, int y, unsigned scale_percent, const os_box* clip)
+ { os_trfm trfm;
+   int     iscale;
+
+   assert(pdiag);
+   assert(diagram != &pdiag->diagram); /* it isn't in the process of being created */
+
+   iscale = (scale_percent * (1<<16))/100;
+
+   trfm.entries[0][0] = iscale;  trfm.entries[0][1] = 0;
+   trfm.entries[1][0] = 0;       trfm.entries[1][1] = iscale;
+   trfm.entries[2][0] = x;       trfm.entries[2][1] = y;
+
+#ifdef PRINT_VERBOSE
+         fprintf(stderr, "page_diagram: about to render page contents with matrix:\n");
+         fprintf(stderr, "  { %d %d }\n  { %d %d }\n { %d %d }\n",
+              trfm.entries[0][0], trfm.entries[0][1],
+              trfm.entries[1][0], trfm.entries[1][1],
+              trfm.entries[2][0], trfm.entries[2][1]);
+         debug_io_flush();
+#endif
+
+   drawfile_render(0, pdiag->diagram, shifting_size((shifting_ptr)&pdiag->diagram), &trfm, clip, 0);
+ }
+
+
+
+
+void page_diagram_bounds(const page_diagram* pdiag, int x, int y, os_box* bounds)
+ { assert(pdiag);
+   assert(diagram != &pdiag->diagram); /* it isn't in the process of being created */
+
+   *bounds = pdiag->diagram->bbox;
+
+   bounds->x0 += x;
+   bounds->y0 += y;
+   bounds->x1 += x;
+   bounds->y1 += y;
+ }
+
+
+
+
+void page_diagram_add_fonts_to_set(const page_diagram* pdiag, font_set* fonts)
+ { draw_font_table_to_set(&pdiag->diagram, offsetof(drawfile_diagram, objects), fonts);
+ }
+
+
+
+
+void page_diagram_save(const page_diagram* pdiag, int x, int y, const font_set* fonts)
+ { byte map[256];
+
+   assert(pdiag);
+
+   draw_font_table_mapping(&pdiag->diagram, offsetof(drawfile_diagram, objects), fonts, map);
+   draw_output_objects(&pdiag->diagram, shifting_size((shifting_ptr)&pdiag->diagram), x, y, 1.0, 1.0, map);
+ }
+
+
+
+
+unsigned page_diagram_estimate_save_size(const page_diagram* pdiag)
+ { return shifting_size((shifting_ptr)&pdiag->diagram);
+ }

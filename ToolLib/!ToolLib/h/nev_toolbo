@@ -1,0 +1,96 @@
+/*** nev_toolbox.h ***/
+/* Handle toolbox actions
+ * By Paul Field
+ * v1.00 - 24/5/1996
+ */
+
+/* In debugging mode, the module checks that the actions for which
+ * handlers are registered were included in the list passed to
+ * nevent_toolbox_initialise() (which should be the ones registered with the Toolbox).
+ * It will also output a list of all actions for which handlers were registered
+ * (for use as an action list).
+ */
+
+/* Notionally there is a set of tuples <object_id, action_number, handler, handle>
+ * called action_handlers.
+ *
+ * When a toolbox action A occurs, tuples with a matching object_id and action_number
+ * are selected and handler() is called until a call returns nevent_HANDLED.
+ *
+ * Tuples are ordered so that those with object_id == nevent_ALL_OBJECTS come last
+ * and otherwise tuples are in reverse order of their registration (i.e. most recently
+ * registered first).
+ */
+
+
+#include "nevent.h"
+
+
+/* An event number that indicates the handler should be called for any action */
+#define nevent_ALL_ACTIONS ((bits)(-1))
+
+
+
+typedef nevent_result (*nevent_toolbox_handler)
+ ( bits            action_num,
+   toolbox_action* action,
+   toolbox_block*  id_block,
+   void*           handle
+ );
+
+
+
+void nevent_toolbox_register_handler(toolbox_o object_id, bits action_num, nevent_toolbox_handler handler, void* handle);
+ /* Pre:  handler != NULL
+  *       action_num may equal nevent_ALL_ACTIONS
+  *       object_id may equal nevent_ALL_OBJECTS
+  *       <object_id, action_num, handler, handle> is not a member of action_handlers
+  * Post: action_handlers == old_action_handlers UNION { <object_id, action_num, handler, handle> }
+  * Exceptions: exception_NO_MEMORY
+  *
+  * Registers 'handler' as a function to be called when toolbox action 'action_num'
+  * occurs on the object 'object_id'. 'handle' is a value which will be passed
+  * to 'handler' and so can associate a data structure with the object.
+  */
+
+
+void nevent_toolbox_deregister_handler(toolbox_o object_id, bits action_num, nevent_toolbox_handler handler, void* handle);
+/* Pre: <object_id, action_num, handler, handle> is a member of action_handlers
+ * Exceptions: none
+ *
+ * De-registers 'handler'.
+ */
+
+
+void nevent_toolbox_deregister_all_handlers(toolbox_o object_id);
+ /* Pre:  object_id != nevent_ALL_OBJECTS
+  * Post: action_handlers = old_action_handlers - { t | t in old_action_handlers && t.object_id == object_id }
+  * Exceptions: none
+  *
+  * Removes all handlers associated with object_id
+  */
+
+
+enum { nevent_toolbox_DEFAULT_HASH_SIZE = 257 };
+
+void nevent_toolbox_initialise(const toolbox_action_list* action_nums, unsigned hash_size);
+ /* Pre: hash_size > 0
+  * Exceptions: exception_NO_MEMORY
+  *
+  * Sets up the toolbox action handling system - call this before any other routines in this file.
+  * 'action_nums' should be the action list passed to toolbox_initialise().
+  * 'hash_size' is the size of the hash table to use internally; it's best if this is a prime number.
+  */
+
+
+#ifndef NDEBUG
+void nevent_toolbox_register_action(bits action_num);
+ /* Exceptions: exception_NO_MEMORY
+  *
+  * Register interest in an action.
+  * In debugging mode, this call causes action_num to be included in the list of actions
+  * used by the application that is output when the program exits.
+  */
+#else
+#define nevent_toolbox_register_action(a)
+#endif

@@ -1,0 +1,156 @@
+/*** queue.h ***/
+/* Abstract data type :
+ *   Double ended queue
+ *   (with facilities for manipulating elements in the middle of the queue)
+ *   (i.e. not much of a queue at all really but very flexible)
+ * (c) Paul Field
+ * V1.00 - 27/4/1994
+ * V1.01 - 25/5/1994  - alterations to interface
+ * V1.10 - 15/7/1995  - change to use queue pointers, make const-correct
+ */
+
+#ifndef _queue_h
+#define _queue_h
+
+#include <stddef.h>
+
+#include "bool.h"
+
+/* This module implements a double ended queue (i.e. elements can be
+ * added & removed from the front and end of the queue). It also allows
+ * non-queue-like access to elements via a 'queue_ptr'.
+ * Elements to be placed in the queue must be allocated by 'queue_alloc_element'
+ * which acts like 'malloc' and must be deallocated by 'queue_free_element'
+ * An element can only appear in one queue at a time. You can get
+ * around this restriction either by copying the object or by
+ * 'queue_alloc_element'ing pointers to the object and placing these pointers
+ * in the queues.
+ *
+ * This module performs extensive checks on function arguments if
+ * it is compiled without NDEBUG defined.
+ * The module can also help to detect memory leaks. When your program
+ * exits the queue module will output (on stderr) the number of queues not
+ * destroyed and the number of queue elements (i.e. objects allocated with
+ * queue_alloc_element()) not freed.
+ * You MUST compile your production code with NDEBUG defined. There is
+ * a large time overhead for these checks.
+ */
+
+typedef struct queue_str queue;              /* Opaque types */
+typedef struct queue_element_str *queue_ptr;
+
+/* Note that queue_ptrs are only valid while the elements they
+ * point to are in a queue. If you remove the element
+ * (e.g. with queue_remove_front) then you cannot
+ * access it via queue_ptrs anymore
+ */
+
+
+void *queue_alloc_element(size_t size);
+ /* As 'malloc' but objects returned can be placed in a queue.
+  */
+
+void queue_free_element(void *element);
+ /* Pre: element must not be a member of a queue
+  *      (element may equal NULL)
+  * As 'free' but for 'queue_alloc_element'ed objects.
+  */
+
+
+bool queue_create(queue **q);
+ /* Pre: q != NULL, **q is not already a queue
+  * Creates an empty queue in *q. Returns TRUE if successful.
+  */
+
+void queue_destroy(queue *q);
+ /* Frees the memory taken up by the queue
+  * (calls queue_free_element for all elements in the queue)
+  */
+
+bool queue_is_empty(const queue *q);
+ /* Returns TRUE if the queue contains no elements.
+  */
+
+void queue_add_front(queue *q, const void *element);
+ /* Pre: element != NULL
+  *      element was allocated by queue_alloc_element(),
+  *      element is not presently in a queue
+  * Adds element to the front of the queue
+  */
+
+void queue_add_end(queue *q, const void *element);
+ /* Pre: element != NULL
+  *      element was allocated by queue_alloc_element(),
+  *      element is not presently in a queue
+  * Adds element to the end of the queue
+  */
+
+void *queue_remove_front(queue *);
+ /* Pre: queue is not empty
+  * Removes the element at the front of the queue and returns it
+  * (N.B. You can add a const element to the queue and it will be returned as non-const: BEWARE)
+  */
+
+void *queue_remove_end(queue *);
+ /* Pre: queue is not empty
+  * Removes the element at the end of the queue and returns it
+  * (N.B. You can add a const element to the queue and it will be returned as non-const: BEWARE)
+  */
+
+
+/**** Routines for non queue-like access ****/
+
+queue_ptr queue_ptr_front(const queue *q);
+ /* Returns a 'pointer' to the element at the front of the queue
+  * Returns NULL if the queue is empty
+  */
+
+queue_ptr queue_ptr_end(const queue *q);
+ /* Returns a 'pointer' to the element at the end of the queue
+  * Returns NULL if the queue is empty
+  */
+
+queue_ptr queue_ptr_before(queue_ptr qptr);
+ /* Pre: qptr points to an element in a queue
+  * Returns a 'pointer' to the element before qptr in the queue.
+  * If qptr points to the front of the queue then there is no element
+  * before it so NULL is returned.
+  */
+
+queue_ptr queue_ptr_behind(queue_ptr qptr);
+ /* Pre: qptr points to an element in a queue
+  * Returns a 'pointer' to the element behind qptr in the queue.
+  * If qptr points to the end of the queue then there is no element
+  * behind it so NULL is returned.
+  */
+
+void *queue_ptr_element(queue_ptr qptr);
+ /* Pre: qptr points to an element in a queue
+  * Returns the element pointed to by qptr
+  */
+
+void queue_add_before_ptr(queue *q, queue_ptr qptr, const void *element);
+ /* Pre: element != NULL
+  *      element was allocated by queue_alloc_element(),
+  *      element is not presently in a queue
+  *      qptr points to an element in q
+  * Adds element to the queue, in front of the element
+  * pointed to by qptr
+  */
+
+void queue_add_behind_ptr(queue *q, queue_ptr qptr, const void *element);
+ /* Pre: element != NULL
+  *      element was allocated by queue_alloc_element(),
+  *      element is not presently in a queue
+  *      qptr points to an element in q
+  * Adds element to the queue, behind the element
+  * pointed to by qptr
+  */
+
+void *queue_ptr_remove(queue *q, queue_ptr qptr);
+ /* Pre: qptr points to an element in q
+  * Removes and returns the element pointed to by qptr from queue q.
+  * Do not use queue_ptr after this call.
+  */
+
+#endif

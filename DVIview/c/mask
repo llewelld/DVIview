@@ -1,0 +1,255 @@
+/**** mask.c ****/
+/* (c) Paul Field 1996
+ */
+
+#include "mask.h"
+
+#include "drawfile.h"
+
+#include "allocate.h"
+#include "box.h"
+#include "exception.h"
+#include "list.h"
+#include "save_buffer.h"
+
+
+struct mask_str
+ { list* to_cover;   /* List of os_box, the areas that need to be covered up (e.g. the bboxes of the unclipped objects) */
+   list* holes;      /* List of os_box, the areas that need to be punched in 'to_cover' so the clipped objects can be seen */
+ };
+
+
+
+/* Draw object 'template' for a white rectangle */
+
+static struct rectangle_str
+ { const int       type;
+   const int       size;
+   os_box          bbox;
+   const os_colour fill;
+   const os_colour outline;
+   const int       width;
+   const drawfile_path_style style;
+   const int       tag_move_bl;
+   os_coord        bl;      /* bottom left corner */
+   const int       tag_line_tl;
+   os_coord        tl;
+   const int       tag_line_tr;
+   os_coord        tr;
+   const int       tag_line_br;
+   os_coord        br;
+   const int       tag_close;
+   const int       tag_end;
+ }
+white_rectangle =
+ { drawfile_TYPE_PATH,
+   sizeof(struct rectangle_str),
+   {0,0,0,0},            /* bounding box - to be filled in */
+   os_COLOUR_WHITE,
+   os_COLOUR_TRANSPARENT,
+   0,
+   {drawfile_PATH_WINDING_EVEN_ODD,0,0,0},
+
+   draw_MOVE_TO, {0,0},  /* corners of the rectangle - to be filled in */
+   draw_LINE_TO, {0,0},
+   draw_LINE_TO, {0,0},
+   draw_LINE_TO, {0,0},
+   draw_CLOSE_LINE,
+   draw_END_PATH
+ };
+
+
+
+
+mask* mask_construct(void)
+ { mask* m;
+
+   m = memory_allocate(sizeof(mask));
+   m->to_cover = NULL;
+   m->holes    = NULL;
+
+   try
+    { m->to_cover = list_create();
+      m->holes    = list_create();
+    }
+   catch
+    { mask_destruct(m);
+      throw();
+    }
+   catch_end
+
+   return m;
+ }
+
+
+
+
+void mask_destruct(mask* m)
+ { if (m != NULL)
+    { list_destroy(m->to_cover);
+      list_destroy(m->holes);
+      memory_free(m);
+    }
+ }
+
+
+
+
+void mask_cover(mask* m, const os_box* cover)
+ { os_box* new_cover;
+
+   assert(m != NULL);
+   assert(boxdebug_is_valid(cover));
+
+   new_cover  = list_alloc_element(sizeof(os_box));
+   *new_cover = *cover;
+   list_cons(m->to_cover, new_cover);
+ }
+
+
+
+
+void mask_hole(mask* m, const os_box* hole)
+ { os_box* new_hole;
+
+   assert(m != NULL);
+   assert(boxdebug_is_valid(hole));
+
+   new_hole  = list_alloc_element(sizeof(os_box));
+   *new_hole = *hole;
+   list_cons(m->holes, new_hole);
+ }
+
+
+
+
+static void add_to_non_overlap(const os_box* b, list* boxes)
+ /* Pre: boxdebug_is_valid(b)
+  *      boxes is a list of non-overlapping os_box
+  * Post: boxes' is a list of non-overlapping os_box
+  *       points(boxes') = points(boxes) UNION points(b)
+  *         where points(x) is the set of points covered by the boxes in x
+  */
+ { if (list_is_empty(boxes))
+    { /* No more boxes, so we just add b */
+      os_box* copy_b;
+
+      copy_b  = list_alloc_element(sizeof(os_box));
+      *copy_b = *b;
+      list_cons(boxes, copy_b);
+    }
+   else
+    { const os_box* head_box;
+
+      head_box = list_remove_head(boxes);
+
+      try
+       { os_box   clipped_area[4];
+         unsigned pieces;
+         unsigned i;
+         os_box   copy_b;
+
+         /* Clip b against the first box */
+         copy_b = *b; /* Make a copy because box_clip_around() would try to alter b */
+         pieces = box_clip_around(head_box, &copy_b, clipped_area);
+
+         /* Clip the remains of b against the rest of the boxes */
+         for (i = 0; i < pieces; i++)
+          { add_to_non_overlap(&clipped_area[i], boxes);
+          }
+
+         list_cons(boxes, head_box);
+       }
+      catch
+       { list_cons(boxes, head_box);
+         throw();
+       }
+      catch_end
+    }
+ }
+
+
+
+
+static void make_hole(const os_box* hole, list* boxes)
+ /* Pre: boxdebug_is_valid(hole)
+  *      boxes is a list of os_box
+  * Post: points(boxes') = points(boxes) - points(b)
+  *         where points(x) is the set of points covered by the boxes in x
+  */
+ { if (!list_is_empty(boxes))
+    { os_box*  head_box;
+      os_box   clipped_area[4];
+      unsigned pieces;
+      unsigned i;
+
+      /*** Make hole in the first box in list ***/
+      head_box = list_remove_head(boxes);
+      pieces = box_clip_around(hole, head_box, clipped_area);
+      list_free_element(head_box);
+
+      /*** Make hole in the rest of the boxes ****/
+      make_hole(hole, boxes);
+
+      /*** Add the remains of the first box to the remains of the rest of the boxes ***/
+      for (i = 0; i < pieces; i++)
+       { os_box *copy;
+
+         copy  = list_alloc_element(sizeof(os_box));
+         *copy = clipped_area[i];
+         list_cons(boxes, copy);
+       }
+    }
+ }
+
+
+
+
+static void mask_output_rectangle(const os_box* b)
+ { white_rectangle.bbox = *b;
+   white_rectangle.bl.x = b->x0;
+   white_rectangle.bl.y = b->y0;
+   white_rectangle.tl.x = b->x0;
+   white_rectangle.tl.y = b->y1;
+   white_rectangle.tr.x = b->x1;
+   white_rectangle.tr.y = b->y1;
+   white_rectangle.br.x = b->x1;
+   white_rectangle.br.y = b->y0;
+   save_buffer_send(&white_rectangle, sizeof(white_rectangle));
+ }
+
+
+
+
+void mask_save(const mask* m)
+ { list* non_overlap_to_cover;
+
+   assert(m != NULL);
+
+   non_overlap_to_cover = list_create();
+   try
+    { list_ptr ptr;
+
+      /*** Find non-overlapping rectangles to cover the pictures ***/
+      for (ptr = list_ptr_head(m->to_cover); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+       { add_to_non_overlap(list_ptr_element(ptr), non_overlap_to_cover);
+       }
+
+      /*** Punch holes where the pictures can be seen ***/
+      for (ptr = list_ptr_head(m->holes); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+       { make_hole(list_ptr_element(ptr), non_overlap_to_cover);
+       }
+
+      /*** Output results as draw objects ***/
+      for (ptr = list_ptr_head(non_overlap_to_cover); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+       { mask_output_rectangle(list_ptr_element(ptr));
+       }
+
+      list_destroy(non_overlap_to_cover);
+    }
+   catch
+    { list_destroy(non_overlap_to_cover);
+      throw();
+    }
+   catch_end
+ }

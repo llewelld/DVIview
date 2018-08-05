@@ -1,0 +1,88 @@
+/*** box.h ***/
+/* Handles interactions between os_boxes
+ * (c) Paul Field
+ * v1.00 - 23/11/1995
+ * v1.01 - 28/11/1995
+ *    Name change box_clip_outside() -> box_clip_around()
+ *    box_clip_around() now allows non-overlapping boxes
+ *    Disabled stack checking
+ *
+ *
+ * All routines are compiled with stack checking disabled so
+ * that bounding boxes can come from flex blocks (e.g. from draw diagrams)
+ */
+
+
+#ifndef os_H
+#include "os.h"
+#endif
+
+
+bool box_overlaps(const os_box* box1, const os_box* box2);
+ /* Pre: boxdebug_is_valid(box1)
+  *      boxdebug_is_valid(box2)
+  *
+  * Returns TRUE if some part of box1 and box2 overlap
+  */
+
+
+bool box_contains(const os_box* box1, const os_box* box2);
+ /* Pre: boxdebug_is_valid(box1)
+  *      boxdebug_is_valid(box2)
+  *
+  * Returns TRUE if box1 contains box2 (i.e. no part of box2 is outside box1)
+  */
+
+
+bool box_clip(const os_box* window, os_box* area);
+ /* Pre: boxdebug_is_valid(window)
+  *      boxdebug_is_valid(area)
+  *
+  * Alters 'area' so that it fits entirely within 'window'.
+  * Returns TRUE if any part of area is inside window, FALSE
+  * if area is outside of window (in which case area is
+  * undefined)
+  */
+
+
+unsigned box_clip_around(const os_box* window, os_box* area, os_box clipped_area[4]);
+ /* Pre: boxdebug_is_valid(window)
+  *      boxdebug_is_valid(area)
+  *      clipped_area != NULL
+  *
+  * Clips 'area' against 'window' (i.e. area is the box that gets chopped up).
+  *
+  * 'area' becomes the region of overlap between 'window' and 'area' (but is undefined if there
+  * is no overlap) and 'clipped_area' is the non-overlapping boxes covering the part of 'area'
+  * that laid outside 'window'.
+  * Returns the number of boxes in clipped_area (starting with clipped_area[0]) (will be 0 if area is completely
+  * contained in window).
+  *
+  * More formally, think of a box as the set of points within the box, and pick the smallest set of N boxes
+  * (placed in clipped_area) such that:
+  * area' = window intersection area
+  * For all 0<=i<N, 0<=j<N, i!=j  clipped_area[i] intersection clipped_area[j] = 0
+  * clipped_area[0] union .... union clipped_area[N] = area - window
+  * The function returns N
+  */
+
+
+void box_bounds(const os_box* box1, const os_box* box2, os_box* bounds);
+ /* Pre: boxdebug_is_valid(box1)
+  *      boxdebug_is_valid(box2)
+  *      bounds != NULL
+  * Makes 'bounds' the smallest box that contains 'box1' and 'box2'.
+  * n.b. bounds may point to the same box as box1 or box2
+  */
+
+
+
+/**** The following routines are intended for use inside assert() for checking       ****/
+/**** preconditions of routines involving draw diagrams. DO NOT use them outside of  ****/
+/**** debugging code                                                                 ****/
+
+bool boxdebug_is_valid(const os_box* box);
+ /* Return TRUE if box is a valid pointer to an os_box:
+  *  It isn't NULL
+  *  The box coordinates are round the right way (i.e. x0<=x1, y0<=y1)
+  */

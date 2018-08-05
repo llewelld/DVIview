@@ -1,0 +1,35 @@
+/*** shifting_send.h ***/
+/* Allow data in a shifting block to be sent to the save_buffer
+ * (c) Paul Field
+ */
+
+#include "shifting_send.h"
+
+#include "exception.h"
+#include "save_buffer.h"
+#include "shifting.h"
+
+
+
+/* Make sure the function call can't move the shifting block */
+#pragma no_check_stack
+
+
+void shifting_send(const void* vbytes, size_t bytes_to_send)
+ { shifting_extension saved_extension_state;
+
+   /* Block malloc extension in case a shifting-block has been passed */
+   saved_extension_state = shifting_set_malloc_extension(shifting_malloc_extension_stopped);
+   try
+    { save_buffer_send(vbytes, bytes_to_send);
+    }
+   catch
+    { /* Return malloc extension to it's previous state */
+      shifting_set_malloc_extension(saved_extension_state);
+      throw();
+    }
+   catch_end
+
+   /* Return malloc extension to it's previous state */
+   shifting_set_malloc_extension(saved_extension_state);
+ }

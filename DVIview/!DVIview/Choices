@@ -1,0 +1,10 @@
+DVIviewChoicesFormat_1
+print:1,1,0,0,0,0,0
+mag_scale:800
+mag_position:1992,1576,2520,2008
+scale:100
+offsets:0,0
+paper:"A2",1189984,1684063
+paper:"A3",841890,1189984
+paper:"A4",594992,841890
+paper:"A5",421000,595000

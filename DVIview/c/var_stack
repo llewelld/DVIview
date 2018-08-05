@@ -1,0 +1,115 @@
+/*** var_stack.h ***/
+/* Stack for dvi variables
+ * (c) Paul Field
+ */
+
+#include "var_stack.h"
+
+#include <assert.h>
+#include <stddef.h>
+
+#include "allocate.h"
+#include "bool.h"
+
+
+enum
+ { start_size = 20
+ };
+
+
+static struct stack
+ { dvi_vars* bottom;      /* Points to the bottom of the stack */
+   dvi_vars* max_element; /* Points to the last possible element in the stack */
+   dvi_vars* free;        /* Points just above the top of the stack */
+ }stack;
+
+/* What the stack looks like:
+ *
+ *  bottom                  free                       max_element
+ *    V                       V                             V
+ * +-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+
+ * | v1  | v2  | v3  | v4  |  ?  |  ?  |  ?  |  ?  |  ?  |  ?  |
+ * +-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+
+ */
+
+
+
+
+#ifndef NDEBUG
+static bool constructed = FALSE;
+
+
+static bool stack_is_valid(void)
+ { return (stack.bottom <= stack.free && stack.free <= stack.max_element+1);
+ }
+#endif
+
+
+
+void var_stack_construct(void)
+ { assert(!constructed);
+
+   stack.bottom = memory_allocate(sizeof(dvi_vars) * start_size);
+   stack.max_element = stack.bottom + start_size - 1;
+   stack.free  = stack.bottom;
+
+#ifndef NDEBUG
+   constructed = TRUE;
+#endif
+ }
+
+
+
+void var_stack_destruct(void)
+ { assert(constructed);
+   assert(stack_is_valid());
+
+   memory_free(stack.bottom);
+
+#ifndef NDEBUG
+   constructed = FALSE;
+#endif
+ }
+
+
+
+
+void var_stack_push(const dvi_vars* vars)
+ { assert(constructed);
+   assert(vars != NULL);
+   assert(stack_is_valid());
+
+   if (stack.free > stack.max_element)
+    { /* Extend stack */
+      ptrdiff_t free_offset;
+      ptrdiff_t max_element_offset;
+      size_t    old_size;
+      size_t    new_size;
+
+      free_offset        = stack.free - stack.bottom;
+      max_element_offset = stack.max_element - stack.bottom;
+
+      old_size = max_element_offset + 1;
+      new_size = old_size*2;
+
+      stack.bottom = memory_reallocate(stack.bottom, sizeof(dvi_vars) * new_size);
+
+      stack.free        = stack.bottom + free_offset;
+      stack.max_element = stack.bottom + new_size - 1;
+    }
+
+   /* Add element to stack */
+   *stack.free++ = *vars;
+ }
+
+
+
+
+void var_stack_pop(dvi_vars* vars)
+ { assert(constructed);
+   assert(vars != NULL);
+   assert(stack_is_valid());
+   assert(stack.free > stack.bottom);
+
+   *vars = *(--stack.free);
+ }

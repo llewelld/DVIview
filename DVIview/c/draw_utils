@@ -1,0 +1,378 @@
+/**** draw_utils.h ****/
+/* Miscellaneous utilities for manipulating draw objects
+ * (c) Paul Field
+ */
+
+#include "draw_utils.h"
+
+#include <assert.h>
+#include <string.h>
+#include <stdio.h>
+
+#include "macros.h"
+
+#include "exception.h"
+#include "save_buffer.h"
+#include "shifting.h"
+
+
+enum { NeverReachHere = FALSE };
+
+
+
+
+void draw_font_table_to_set(drawfile_diagram* const * d, unsigned table_offset, font_set* fonts)
+ { unsigned               font_def_offset;
+   unsigned               end_offset;
+   const drawfile_object* table;
+
+   table = draw_object_at(d, table_offset);
+
+   assert(table->type == drawfile_TYPE_FONT_TABLE);
+   font_def_offset = table_offset + offsetof(drawfile_object, data.font_table.font_def);
+   end_offset      = table_offset + table->size;
+
+   while(font_def_offset < end_offset && *((const byte*)*d + font_def_offset) != 0)
+    { font_info                info;
+      const drawfile_font_def* font_def;
+      unsigned                 name_length;
+
+      font_def    = draw_item_at(d, font_def_offset);
+      name_length = strlen(font_def->font_name);
+      strcpy(info.name, font_def->font_name);
+      set_insert(fonts, &info);
+      font_def_offset += drawfile_SIZEOF_FONT_DEF(name_length+1);
+    }
+ }
+
+
+
+
+void draw_font_table_mapping(drawfile_diagram* const * d, unsigned table_offset, const font_set* fonts, byte map[256])
+ { unsigned               font_def_offset;
+   unsigned               end_offset;
+   const drawfile_object* table;
+
+   table = draw_object_at(d, table_offset);
+
+   assert(table->type == drawfile_TYPE_FONT_TABLE);
+   font_def_offset = table_offset + offsetof(drawfile_object, data.font_table.font_def);
+   end_offset      = table_offset + table->size;
+
+   while(font_def_offset < end_offset && *((const byte*)*d + font_def_offset) != 0)
+    { font_info*               real_info;
+      font_info                info;
+      const drawfile_font_def* font_def;
+      unsigned                 name_length;
+      byte                     id;
+
+      font_def    = draw_item_at(d, font_def_offset);
+      name_length = strlen(font_def->font_name);
+      id          = font_def->font_index;
+
+      strcpy(info.name, font_def->font_name);
+      real_info = set_contains(fonts, &info);
+      assert(real_info);
+      map[id] = real_info->tag.id;
+
+      font_def_offset += drawfile_SIZEOF_FONT_DEF(name_length+1);
+    }
+ }
+
+
+
+
+bool draw_find_font_table(drawfile_diagram* const * d, size_t length, unsigned* offset)
+ { unsigned pos;
+
+   pos = offsetof(drawfile_diagram, objects);
+
+   while (pos < length)
+    { const drawfile_object* current_object;
+
+      current_object = draw_object_at(d, pos);
+      if (current_object->type == drawfile_TYPE_FONT_TABLE)
+       { *offset = pos;
+         return TRUE;
+       }
+      pos += current_object->size;
+    }
+
+   return FALSE;
+ }
+
+
+
+
+static void draw_output_object(const drawfile_object* o, int x, int y, double scale_x, double scale_y, byte font_id_map[256])
+ { unsigned object_array_elements;
+   static const struct
+    { /*bool*/ char process;   /* chars used to reduce space taken up by array */
+      /*bool*/ char has_bbox;
+    }
+   object_info[] =
+    { {FALSE, FALSE},  /* font table */
+      {TRUE,  TRUE },  /* text */
+      {TRUE,  TRUE },  /* path */
+      {FALSE, FALSE},  /* undefined */
+      {FALSE, FALSE},  /* undefined */
+      {TRUE,  TRUE },  /* sprite */
+      {TRUE,  TRUE },  /* group */
+      {TRUE,  TRUE },  /* tagged */
+      {FALSE, FALSE},  /* undefined */
+      {FALSE, TRUE},   /* text area */
+      {FALSE, TRUE},   /* text column */
+      {FALSE, FALSE},  /* options */
+      {TRUE,  TRUE},   /* transformed text */
+      {TRUE,  TRUE}    /* transformed sprite */
+    };
+
+   assert(o);
+
+   object_array_elements = sizeof(object_info)/sizeof(object_info[0]);
+   if (o->type < object_array_elements && object_info[o->type].process)
+    { save_buffer_send(&o->type, 2*sizeof(int));  /* output type and size */
+
+      /* Transform the bounding box (if the object has one) */
+      if (object_info[o->type].has_bbox)
+       { os_box        new_bbox;
+         const os_box* bbox;
+
+         bbox = &o->data.text.bbox;  /* bbox is always in the same place - we arbitrarily choose to use text's bbox */
+         new_bbox.x0 = (int)(bbox->x0 * scale_x) + x;
+         new_bbox.x1 = (int)(bbox->x1 * scale_x) + x;
+         new_bbox.y0 = (int)(bbox->y0 * scale_y) + y;
+         new_bbox.y1 = (int)(bbox->y1 * scale_y) + y;
+         save_buffer_send(&new_bbox, sizeof(os_box));
+       }
+
+      /* Transform the object */
+      switch(o->type)
+       { case drawfile_TYPE_TEXT:
+          { drawfile_text text;
+
+            text = o->data.text;
+            text.xsize  = (int)(text.xsize * scale_x);
+            text.ysize  = (int)(text.ysize * scale_y);
+            text.base.x = (int)(text.base.x * scale_x)+x;
+            text.base.y = (int)(text.base.y * scale_y)+y;
+            text.style.font_index = font_id_map[text.style.font_index];
+
+            save_buffer_send(&text.fill, offsetof(drawfile_text, text) - offsetof(drawfile_text, fill));
+            save_buffer_send(o->data.text.text, o->size - offsetof(drawfile_text,text) - 2*sizeof(int) );
+            break;
+          }
+
+
+         case drawfile_TYPE_PATH:
+          { const draw_path*         path;
+            const draw_path_element* element;
+            static const             element_coords[] = {0,0,1,1,0,0,3,1,1};
+            double                   scale_distance;
+            int                      width;
+
+            scale_distance = (scale_x+scale_y)/2;
+            width = (int)(o->data.path.width * scale_distance);
+            save_buffer_send(&o->data.path.fill, offsetof(drawfile_path, width) - offsetof(drawfile_path, fill));
+            save_buffer_send(&width, sizeof(int));
+            save_buffer_send(&o->data.path.style, sizeof(drawfile_path_style));
+
+            /* Transform the dash pattern */
+            if (o->data.path.style.flags & drawfile_PATH_DASHED)
+             { const draw_dash_pattern* pattern;
+               unsigned                 i;
+
+               pattern = &o->data.path_with_pattern.pattern;
+               save_buffer_send(&pattern->start, sizeof(int));
+               save_buffer_send(&pattern->element_count, sizeof(int));
+
+               for (i=0; i < pattern->element_count; i++)
+                { int length;
+
+                  length = (int)(pattern->elements[i] * scale_distance);
+                  save_buffer_send(&length, sizeof(int));
+                }
+               path = (const draw_path*)((byte*)pattern + draw_SIZEOF_DASH_PATTERN(pattern->element_count));
+             }
+            else
+             { path = &o->data.path.path;
+             }
+
+            /* Tranform the path */
+            for (element = path->elements;
+                 element->tag != draw_END_PATH;
+                 element = (draw_path_element*)((byte*)element + sizeof(int) + sizeof(os_coord)*element_coords[element->tag]))
+             { int i;
+
+               save_buffer_send(&element->tag, sizeof(int));
+
+               for (i = 0; i < element_coords[element->tag]; i++)
+                { os_coord coord;
+
+                  coord = ((os_coord *)&element->data)[i];
+                  coord.x = (int)(coord.x * scale_x) + x;
+                  coord.y = (int)(coord.y * scale_y) + y;
+                  save_buffer_send(&coord, sizeof(os_coord));
+                }
+             }
+            save_buffer_send(&element->tag, sizeof(int)); /* output the end of path element */
+            break;
+          }
+
+
+         case drawfile_TYPE_SPRITE:
+           save_buffer_send(&o->data.sprite.header, o->size - sizeof(os_box) - 2*sizeof(int));
+           break;
+
+
+         case drawfile_TYPE_GROUP:
+           save_buffer_send(o->data.group.name, 12);
+           break;
+
+
+         case drawfile_TYPE_TAGGED:
+           save_buffer_send(&o->data.tagged.tag, o->size - sizeof(os_box) - 2*sizeof(int));
+           break;
+
+
+         case drawfile_TYPE_TRFM_TEXT:
+          { drawfile_trfm_text text;
+
+            text = o->data.trfm_text;
+
+            text.trfm.entries[0][0] = (int)(text.trfm.entries[0][0] * scale_x);
+            text.trfm.entries[1][0] = (int)(text.trfm.entries[1][0] * scale_x);
+            text.trfm.entries[0][1] = (int)(text.trfm.entries[0][1] * scale_y);
+            text.trfm.entries[1][1] = (int)(text.trfm.entries[1][1] * scale_y);
+/**
+            text.xsize = (int)(text.xsize * scale_x);
+            text.ysize = (int)(text.ysize * scale_y);
+**/
+            text.base.x = (int)(text.base.x * scale_x)+x;
+            text.base.y = (int)(text.base.y * scale_y)+y;
+            text.style.font_index = font_id_map[text.style.font_index];
+
+            save_buffer_send(&text.trfm, offsetof(drawfile_trfm_text, text) - offsetof(drawfile_trfm_text, trfm));
+            save_buffer_send(o->data.trfm_text.text, o->size - offsetof(drawfile_trfm_text,text) - 2*sizeof(int) );
+            break;
+          }
+
+
+         case drawfile_TYPE_TRFM_SPRITE:
+          { os_trfm trfm;
+
+            trfm = o->data.trfm_sprite.trfm;
+
+            trfm.entries[0][0] = (int)(trfm.entries[0][0] * scale_x);
+            trfm.entries[1][0] = (int)(trfm.entries[1][0] * scale_x);
+            trfm.entries[0][1] = (int)(trfm.entries[0][1] * scale_y);
+            trfm.entries[1][1] = (int)(trfm.entries[1][1] * scale_y);
+
+            trfm.entries[2][0] = (int)(trfm.entries[2][0] * scale_x)+x;
+            trfm.entries[2][1] = (int)(trfm.entries[2][1] * scale_y)+y;
+
+            save_buffer_send(&trfm, sizeof(os_trfm));
+            save_buffer_send(&o->data.trfm_sprite.header, o->size - sizeof(os_trfm) - sizeof(os_box) - 2*sizeof(int));
+            break;
+          }
+
+         default:
+           assert(NeverReachHere);
+       }
+    }
+ }
+
+
+
+
+void draw_output_objects
+ ( drawfile_diagram* const* d,
+   size_t             length,
+   int                x,
+   int                y,
+   double             scale_x,
+   double             scale_y,
+   byte               font_id_map[256]
+ )
+ { shifting_extension     saved_extension_state;
+
+   /* Block malloc extension so we can use addresses inside a shifting-block */
+   saved_extension_state = shifting_set_malloc_extension(shifting_malloc_extension_stopped);
+
+   try
+    { const drawfile_object* current_object;
+      const drawfile_object* end_of_diagram;
+
+      end_of_diagram = draw_object_at(d, length);
+      current_object = (*d)->objects;
+
+      while (current_object < end_of_diagram)
+       { unsigned size;
+
+         draw_output_object(current_object, x, y, scale_x, scale_y, font_id_map);
+
+         if (current_object->type == drawfile_TYPE_GROUP)
+          { /* Just skip the group header - not the whole group */
+            size = 2*sizeof(int) + sizeof(os_box) + 12; /* for name */
+          }
+         else
+          { size = current_object->size;
+          }
+
+         current_object = (const drawfile_object*)((const byte*)current_object + size);
+       }
+    }
+   catch
+    { /* Return malloc extension to it's previous state */
+      shifting_set_malloc_extension(saved_extension_state);
+      throw();
+    }
+   catch_end
+
+   /* Return malloc extension to it's previous state */
+   shifting_set_malloc_extension(saved_extension_state);
+ }
+
+
+
+
+void draw_output_font_table(const font_set* fonts)
+ { /* Only output the font table if there are some fonts to put in it */
+   if (set_elements(fonts) > 0)
+    { set_ptr  ptr;
+      unsigned size;
+      unsigned aligned_size;
+
+      /* Calculate the font table's size */
+      size = 2*sizeof(int); /* size of header */
+
+      for (ptr = set_ptr_first(fonts); !set_ptr_past_the_end(ptr); set_ptr_inc(&ptr))
+       { font_info* info;
+
+         info = set_ptr_element(ptr);
+         size += drawfile_SIZEOF_FONT_DEF(strlen(info->name)+1);
+       }
+
+      aligned_size = ALIGN(size);
+
+
+      /* Output header */
+      save_buffer_send_unsigned(drawfile_TYPE_FONT_TABLE);
+      save_buffer_send_unsigned(aligned_size);
+
+      /* Output table entries */
+      for (ptr = set_ptr_first(fonts); !set_ptr_past_the_end(ptr); set_ptr_inc(&ptr))
+       { font_info* info;
+         byte       id;
+
+         info = set_ptr_element(ptr);
+         id   = info->tag.id;
+
+         save_buffer_send(&id, sizeof(byte));
+         save_buffer_send(info->name, strlen(info->name)+1);
+       }
+
+      /* Output padding to bring the table to a word boundary */
+      save_buffer_send("\0\0\0\0", aligned_size-size);
+    }
+ }

@@ -1,0 +1,74 @@
+/*** vp_font.c ***/
+
+
+#include "vp_font.h"
+
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "pdriver.h"
+
+#include "font_set.h"
+
+
+static font_set* fonts = NULL;
+
+
+
+void vp_font_declarer_construct(void)
+ { assert(fonts == NULL);
+
+   fonts = font_set_construct();
+ }
+
+
+
+
+void vp_font_declarer_finished(void)
+ { set_ptr ptr;
+
+   assert(fonts != NULL);
+
+   /* Tell the printer system about the fonts we've gathered */
+   for (ptr = set_ptr_first(fonts); !set_ptr_past_the_end(ptr); set_ptr_inc(&ptr))
+    { font_info *info;
+
+      info = set_ptr_element(ptr);
+      pdriver_declare_font(0, info->name, (bits) info->tag.flags);
+    }
+   pdriver_declare_font(0, 0, 0);  /* Finish declaring fonts */
+ }
+
+
+
+
+void vp_font_declarer_destruct(void)
+ { set_destroy(fonts);
+   fonts = NULL;
+ }
+
+
+
+
+static void declare_font(const char* font_name, unsigned flags)
+ { font_info info;
+
+   assert(fonts != NULL);
+
+#ifdef PRINT_VERBOSE
+   fprintf(stderr, "print: declaring font: %s, flags = %x\n", font_name, flags);
+#endif
+
+   /* Add font to the font list */
+   info.tag.flags = flags;
+   assert(strlen(font_name) <= font_NAME_LIMIT);
+   strncpy(info.name, font_name, font_NAME_LIMIT+1);
+   set_insert(fonts, &info);
+ }
+
+
+
+print_font_declarer vp_font_declarer =
+ { declare_font
+ };

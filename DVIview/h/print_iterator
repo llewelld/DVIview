@@ -1,0 +1,45 @@
+/*** print_iterator.h ***/
+/* A print_iterator provides the sides that the printing system must print
+ * There must be at least one side available to print
+ * (c) Paul Field 1996
+ * v1.00 - 2/5/1996
+ */
+
+#ifndef print_iterator_h
+#define print_iterator_h
+
+#include "bool.h"
+
+#include "print_side.h"
+
+
+typedef struct print_iterator_str
+ { unsigned (*number)(void);
+    /* Returns the number of sides to print
+     * (including copies. e.g. 3 copies of 2 sides = 6 sides)
+     */
+
+   void (*declare_fonts)(void);
+    /* Declares all the fonts in the sides to print to
+     * the printer manager
+     */
+
+   print_side* (*get_side)(void);
+    /* Returns the current side
+     */
+
+   unsigned (*copies)(void);
+    /* Returns the number of copies to be made of the current side
+     * (never returns 0)
+     */
+
+   bool (*next)(void);
+    /* Steps to the next side, returning FALSE if there is no next side
+     */
+
+   void (*destruct)(void);
+    /* Frees resources associated with the iterator
+     */
+ }print_iterator;
+
+#endif

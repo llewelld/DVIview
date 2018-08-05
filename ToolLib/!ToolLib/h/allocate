@@ -1,0 +1,51 @@
+/*** allocate.h ***/
+/* Exception-throwing variants of malloc() etc.
+ * (c) Paul Field
+ * v1.00 - 1/9/1995
+ */
+
+#ifndef _allocate_h
+#define _allocate_h
+
+#include <stdlib.h>
+
+/* Exceptions thrown by this sub-system */
+enum
+ { exception_NO_MEMORY = 0x10000
+ };
+
+
+
+void* memory_allocate(size_t size);
+ /* Pre: size > 0
+  * Exceptions: exception_NO_MEMORY
+  *
+  * Returns a pointer to a block of memory 'size' chars big
+  * Throws exception_NO_MEMORY if the memory cannot be allocated
+  */
+
+
+void* memory_reallocate(void* old_memory, size_t new_size);
+ /* Pre:  old_memory == NULL || old_memory was allocated using memory_allocate()
+  * Post: old_memory is an invalid pointer
+  * Exceptions: exception_NO_MEMORY
+  *
+  * Returns a pointer to a block of memory 'new_size' chars big containing
+  * the same contents as 'old_memory' (possibly truncated or with garbage added
+  * depending on the sizes of the memory blocks).
+  * If new_size == 0 then old_memory is freed and NULL is returned
+  * Throws exception_NO_MEMORY if there was not enough memory for the new block
+  * (in which case the old_memory is still valid).
+  *
+  * Example use:
+  *   // resize block to 1000 chars
+  *   block = memory_reallocate(block, 1000);
+  */
+
+
+void memory_free(void* memory);
+ /* Frees a block of memory allocated using memory_allocate()
+  * (memory may be NULL)
+  */
+
+#endif

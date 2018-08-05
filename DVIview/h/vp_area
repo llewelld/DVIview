@@ -1,0 +1,38 @@
+/*** vp_area.h ***/
+
+
+#include "print_declarer.h"
+
+
+typedef struct vp_area_str vp_area;
+
+
+typedef struct vp_transform_str
+ { os_hom_trfm transformation;
+   os_coord    origin;
+ }vp_transform;
+
+
+
+vp_area* vp_area_construct(const vp_transform* transform);
+ /* Pre: transform != NULL
+  * Create and return a vp_area that will apply transform to any rectangles declared to it.
+  */
+
+
+void vp_area_destruct(vp_area* area);
+ /* Releases the resources associated with area (which may be NULL)
+  */
+
+
+enum { vp_area_id_limit = 16 };
+
+print_rect_declarer* vp_area_rectangle_declarer(vp_area* area, unsigned area_id);
+ /* Pre: area != NULL
+  *      area_id < vp_area_id_limit
+  * Returns an object that can declare rectangles in the area
+  * (area 'owns' the object returned).
+  *
+  * If a rectangle is declared with an id of U, using the object returned from this
+  * call, the printer manager will return the rectangle with an id of U*vp_area_id_limit + area_id
+  */

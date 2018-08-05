@@ -1,0 +1,111 @@
+/**** page_diag.h ****/
+/* Functions for creating a diagram corresponding to a page
+ * This interface does not specify what a 'diagram' is so
+ * a different diagram representation can easily be substituted
+ * (c) Paul Field 1995
+ */
+
+/* Only one diagram can be created at a time.
+ *
+ * Creation begins when page_diagram_construct() is called and finished when
+ * either page_diagram_destruct() or page_diagram_finish() is called.
+ *
+ * The current diagram is not a valid until page_diagram_finish is successfully called
+ *
+ * page_diagram_destruct() should, eventually, be called for all diagrams.
+ */
+
+
+#include "font_set.h"
+#include "real_font.h"
+
+typedef struct page_diagram_str page_diagram;
+
+
+page_diagram* page_diagram_construct(double dvi_to_draw);
+ /* Pre: dvi_to_draw is a number, multiplication by which turns dvi units into draw units
+  *      Either page_diagram_finish() or page_diagram_destruct() has been called since the
+  *      last call to this function.
+  * Exceptions: exception_NO_MEMORY
+  * Constructs an empty diagram.
+  */
+
+void page_diagram_put_char(const real_font* font, int x, int y, unsigned char c);
+ /* Pre: font != NULL
+  *      real_font_char_is_valid(font, c)
+  * Exceptions: exception_NO_MEMORY
+  *
+  * Places character c from the font at position (x,y) in the current diagram.
+  * If there is an error, the diagram remains unchanged
+  * x and y, are in DVI units
+  */
+
+void page_diagram_put_rule(int h, int v, int width, int height);
+ /* Exceptions: exception_NO_MEMORY
+  * Places a rule of width width and height height with its bottom left corner at (h,v) in the current diagram.
+  * If there is an exception, the diagram remains unchanged
+  * N.B. h,v,width and height are in DVI units
+  */
+
+void page_diagram_set_scale(double scale);
+ /* Applies the scaling factor (about 0,0) to all future put_char and put_rule calls
+  */
+
+double page_diagram_get_scale(void);
+ /* Returns the current scaling factor
+  */
+
+
+void page_diagram_finish(void);
+ /* Exceptions: exception_NO_MEMORY
+  * This call finishes off the creation of the current diagram by tidying up
+  * internal data structures.
+  * If there is an exception then the diagram will remain unchanged and also invalid
+  * but the diagram creation will be finished
+  */
+
+void page_diagram_destruct(page_diagram* diagram);
+ /* Pre: diagram == NULL
+  *    OR
+  *      diagram was constructed using page_diagram_construct
+  *      If a diagram is being created then it is 'diagram'
+  * The memory associated with diagram is freed. If the diagram
+  * was in the process of creation then internal data structures are
+  * tidied up.
+  */
+
+
+/**************************************************************************************************/
+/* The following routines can only be applied to page_diagrams that have been successfully
+ * created and a call to page_diagram_finish has been made
+ */
+
+void page_diagram_draw(const page_diagram* diagram, int x, int y, unsigned scale_percent, const os_box *clip);
+ /* Draws diagram with its top left corner at screen coordinate (x,y) and magnified by scale where:
+  * x and y are in draw units
+  * clip is the current graphics clipping rectangle (typically returned by the Wimp)
+  */
+
+void page_diagram_bounds(const page_diagram* diagram, int x, int y, os_box* bounds);
+ /* Pre: (x,y) is the screen coordinate (in Draw units) of the page origin (i.e. it's top left corner)
+  * Returns the bounding box of material in the page diagram in draw units
+  * N.B. the top left of the bounds is not necessarily (x,y).
+  */
+
+void page_diagram_add_fonts_to_set(const page_diagram* diagram, font_set* fonts);
+ /* Post: font_set = font_set union the fonts required for diagram
+  * Exceptions: exception_NO_MEMORY
+  * On exception some fonts may have been added to font_set
+  */
+
+void page_diagram_save(const page_diagram* diagram, int x, int y, const font_set* fonts);
+ /* Pre: fonts contains all the fonts used in the page with each id equal to the
+  *        font id used in the font_table object which should have been output before this call
+  *      (x,y) is the top left corner of the page in Draw units
+  * Exceptions: os exceptions
+  * Saves the diagram as a stream of draw objects using the save_buffer module
+  */
+
+unsigned page_diagram_estimate_save_size(const page_diagram* diagram);
+ /* Returns the approximate size of the output produced by page_diagram_save
+  */

@@ -1,0 +1,97 @@
+/*** file.h ***/
+/* Simple read-only file interface
+ * (c) Paul Field 1996
+ */
+
+#ifndef file_h
+#define file_h
+
+#include <stddef.h>
+
+#include "bool.h"
+
+
+typedef struct file_str file;
+
+
+bool file_exists(const char* name);
+ /* Pre: name != NULL
+  *
+  * Returns TRUE iff the file called 'name' exists
+  */
+
+
+file* file_construct(const char* name);
+ /* Pre: name != NULL
+  * Post: get_position(file) = 0
+  * Exceptions: OS, if file doesn't exist, can't be opened etc.
+  *
+  * Opens and returns the file identified by name
+  */
+
+
+void file_destruct(file* f);
+ /* Closes f and frees any resources associated with it.
+  * (f may be NULL)
+  */
+
+
+const char* file_name(const file* f);
+ /* Pre:  f != NULL
+  *
+  * Returns the canonicalised name of the file.
+  * The value returned is valid until the next call to this function.
+  */
+
+
+void file_set_position(file* f, unsigned position);
+ /* Pre:  f != NULL
+  *       position < extent(f)
+  * Post: get_position(f) == position
+  * Exceptions: OS
+  *
+  * Sets the value of the file pointer.
+  */
+
+
+unsigned file_get_position(const file* f);
+ /* Pre:  f != NULL
+  * Post: 0 <= position_returned <= extent(f)
+  *
+  * Returns f's pointer position
+  */
+
+
+unsigned file_extent(const file* f);
+ /* Pre: f != NULL
+  *
+  * Returns f's extent
+  */
+
+
+void file_read(file* f, void* destination, size_t num_bytes_to_read);
+ /* Pre:  f != NULL
+  *       get_position(f) + num_bytes_to_read <= extent(f)
+  *       There is num_bytes_to_read free space at destination
+  * Post: for all i, 0 <= i < num_bytes_to_read, destination[i] == f[get_position(f)+i]
+  *       get_position(f) == old_get_position(f) + num_bytes_to_read
+  *
+  * Reads num_bytes_to_read bytes from f, starting at the current file position, to destination
+  */
+
+
+void file_read_at(file* f, void* destination, size_t num_bytes_to_read, unsigned position);
+ /* Semantically equivalent to:
+  *    file_set_position(f, position);
+  *    file_read(f, destination, num_bytes_to_read)
+  */
+
+
+void file_time_stamp(const file* f, unsigned char UTC[5]);
+ /* Pre:  f != NULL
+  *
+  * Sets UTC to be the file's time stamp
+  */
+
+
+#endif

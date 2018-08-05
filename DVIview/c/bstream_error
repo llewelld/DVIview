@@ -1,0 +1,18 @@
+/*** bstream_error.c ***/
+/* Create exceptions for byte_stream errors
+ * Byte streams must be file streams (because their name is needed)
+ */
+
+#include "bstream_error.h"
+
+#include "file_error.h"
+
+
+const char* byte_stream_error(const byte_stream* stream, const char* type, const char* description_tag)
+ { return file_error_named(byte_stream_name(stream), type, description_tag);
+ }
+
+
+void byte_stream_error_throw(const byte_stream* stream, const char* type, const char* description_tag)
+ { file_error_named_throw(byte_stream_name(stream), type, description_tag);
+ }

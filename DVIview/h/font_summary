@@ -1,0 +1,38 @@
+/**** font_summary.h ****/
+/* Maintains a list of font summaries
+ * (c) Paul Field
+ */
+
+#include "bool.h"
+
+
+bool font_summary_width(const char* font_name, double* width);
+ /* Pre:  font_name != NULL
+  *       width != NULL
+  * Post: *width != 0.0
+  * Exceptions: none
+  *
+  * Returns TRUE iff a font summary for font_name exists and, if it does,
+  * puts the font 'width' into width.
+  */
+
+
+void font_summary_update(void);
+ /* Exceptions: exception_NO_MEMORY, os
+  *
+  * Re-loads the font summaries (use if you think the summaries
+  * may have changed)
+  */
+
+
+void font_summary_construct(void);
+ /* Exceptions: exception_NO_MEMORY, os
+  *
+  * Loads the font summaries (call before any other function in this module).
+  */
+
+
+void font_summary_destruct(void);
+ /* Frees all resources associated with the font summaries.
+  * (Typically, you would call this at the end of the program)
+  */

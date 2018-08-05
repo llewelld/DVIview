@@ -1,0 +1,133 @@
+/*** fast_trig.h ***/
+/* Implements trigonomic functions using table lookup.
+ * (c) Paul Field
+ * v1.00 - 22/11/1995
+ */
+
+#include "fast_trig.h"
+
+#include <assert.h>
+#include <math.h>
+
+
+/* A definition of a boolean type */
+typedef enum { FALSE, TRUE } bool;
+
+
+/* A debugging flag for checking the system has been initialised before it is used */
+#ifndef NDEBUG
+static bool initialised;
+#endif
+
+
+/* Macros for converting between angle units */
+#ifndef PI
+#define PI 3.1415926535897932385
+#endif
+
+#define DegToRad(degrees) ((degrees)*PI/180.0)
+#define RadToDeg(radians) ((radians)*180.0/PI)
+
+
+/* The lookup table */
+static double sin_lookup[91];
+
+
+
+
+double fast_sin(int angle)
+ { int    sign;
+   double result;
+
+   assert(initialised);
+
+   /* Make the angle positive using the rule sin(-x) = -sin(x) */
+   /* We need a positive angle because the behaviour of
+    * the % operator is machine-dependent on negative operands
+    */
+   if (angle < 0)
+    { angle = -angle;
+      sign = -1;
+    }
+   else
+    { sign = 1;
+    }
+
+   /* Make 0 <= angle < 360 using the rule
+    * sin(x) = sin(x + 360k) for any integer k
+    */
+   angle %= 360;
+
+   /* Make 0 <= angle <= 180 using the rule sin(x) = -sin(x - 180) */
+   if (angle > 180)
+    { sign = -sign;
+      angle -= 180;
+    }
+
+   /* Make 0 <= angle <= 90 using the rule sin(x) = sin(180 - x) */
+   if (angle > 90)
+    { angle = 180-angle;
+    }
+
+   /* Angle is between 0 and 90 inclusive so we can look its value up */
+   result = sin_lookup[angle];
+   return (sign == 1 ? result : -result);
+ }
+
+
+
+
+double fast_cos(int angle)
+ { /* Calculate cos() using the rule cos(x) = sin(x + 90) */
+   return fast_sin(angle + 90);
+ }
+
+
+
+
+void fast_trig_initialise(void)
+ { unsigned angle;
+
+   for (angle = 0; angle <= 90; angle++)
+    { sin_lookup[angle] = sin(DegToRad(angle));
+    }
+#ifndef NDEBUG
+   initialised = TRUE;
+#endif
+ }
+
+
+
+
+/* Test routine */
+
+#ifdef TEST_TRIG
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+static void test_values(const char *function_name, int angle, double fast_value, double real_value)
+ { if (fabs(fast_value - real_value) > 0.000001)
+    { printf("Error in %s: %d degrees -->  %f, %f\n", function_name, angle, fast_value, real_value);
+    }
+ }
+
+
+
+
+int main(void)
+ { int angle;
+
+   fast_trig_initialise();
+   for (angle = -720; angle < 720; angle++)
+    { if (abs(angle) % 100 == 0)
+       { printf("%d,", angle);
+       }
+      test_values("sin", angle, fast_sin(angle), sin(DegToRad(angle)));
+      test_values("cos", angle, fast_cos(angle), cos(DegToRad(angle)));
+    }
+
+   return 0;
+ }
+#endif

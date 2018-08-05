@@ -1,0 +1,91 @@
+/*** text_plot.c ***/
+/* Functions for plotting text using the desktop font.
+ * Uses Wimp_TextOp on RISC OS 3.5+, otherwise uses the system font.
+ *
+ * (c) Paul Field
+ */
+
+#include "text_plot.h"
+
+#include <assert.h>
+#include <string.h>
+
+#include "colourtrans.h"
+#include "wimp.h"
+#include "wimpreadsysinfo.h"
+
+
+
+
+static bool wimp_text_available(void)
+ { static bool checked_version = FALSE;
+   static bool available;
+
+   if (!checked_version)
+    { available = (wimpreadsysinfo_version() >= 350);
+    }
+
+   return available;
+ }
+
+
+
+
+void text_plot_set_colours(os_colour foreground, os_colour background)
+ { if (wimp_text_available())
+    { wimptextop_set_colour(foreground, background);
+    }
+   else
+    { colourtrans_set_gcol(foreground, colourtrans_SET_FG, os_ACTION_OVERWRITE, NULL);
+      colourtrans_set_gcol(background, colourtrans_SET_BG, os_ACTION_OVERWRITE, NULL);
+    }
+ }
+
+
+
+
+int text_plot_width(const char* string)
+ { assert(string != NULL);
+
+   if (wimp_text_available())
+    { return wimptextop_string_width(string, 0);
+    }
+   else
+    { return strlen(string) * wimp_CHAR_XSIZE;
+    }
+ }
+
+
+
+
+void text_plot(const char* string, int x, int y)
+ { assert(string != NULL);
+
+   if (wimp_text_available())
+    { wimptextop_paint(0, string, x, y);
+    }
+   else
+    { /* Move to top left for plotting system text */
+      os_plot(os_MOVE_TO, x, y + wimp_CHAR_YSIZE - text_plot_baseline_adjustment);
+      os_write0(string);
+    }
+ }
+
+
+
+
+void text_plot_right_justified(const char* string, int x, int y)
+ { assert(string != NULL);
+
+   if (wimp_text_available())
+    { wimptextop_paint(wimptextop_RJUSTIFY, string, x, y);
+    }
+   else
+    { int width;
+
+      width = strlen(string) * wimp_CHAR_XSIZE;
+      /* Move to top left for plotting system text */
+      os_plot(os_MOVE_TO, x-width, y + wimp_CHAR_YSIZE - text_plot_baseline_adjustment);
+      os_write0(string);
+    }
+ }

@@ -1,0 +1,243 @@
+/*** nev_wimp.c ***/
+/* Handle Wimp events
+ * By Paul Field
+ */
+
+#include "nev_wimp.h"
+
+#include <assert.h>
+#include <stdio.h>
+
+#include "list.h"
+#include "allocate.h"
+
+#include "nev_support.h"
+
+
+typedef struct wimp_handler_info_str
+ { toolbox_o            object_id;
+   nevent_wimp_handler  handler;
+   void*                handle;
+ }
+wimp_handler_info;
+
+
+
+enum
+ { event_number_max = wimp_POLLWORD_NON_ZERO,
+   event_limit
+ };
+
+
+static list*  handler_list[event_limit];
+static list*  all_events_handler_list;
+
+
+#ifndef NDEBUG
+static bool          initialised;
+static wimp_event_no debug_event_num;
+#endif
+
+
+
+static bool call_handlers(const list* handlers, wimp_event_no event_num, wimp_block* poll_block, toolbox_block* id_block)
+ { list_ptr ptr;
+
+   for (ptr = list_ptr_head(handlers); !list_ptr_past_the_end(ptr); list_ptr_inc(&ptr))
+    { const wimp_handler_info* handler_info;
+
+      handler_info = list_ptr_element(ptr);
+      if
+       ( handler_info->object_id == nevent_ALL_OBJECTS ||
+         handler_info->object_id == id_block->this_obj
+       )
+       { if (handler_info->handler(event_num, poll_block, id_block, handler_info->handle))
+          { return TRUE;
+          }
+       }
+    }
+   return FALSE;
+ }
+
+
+
+
+static bool nevent_wimp_dispatch(wimp_event_no event_num, wimp_block* poll_block, toolbox_block* id_block)
+ { if (event_num < event_limit)
+    { if (!call_handlers(handler_list[event_num], event_num, poll_block, id_block))
+       { call_handlers(all_events_handler_list, event_num, poll_block, id_block);
+       }
+      return TRUE;
+    }
+   return FALSE;
+ }
+
+
+
+
+void nevent_wimp_register_handler(toolbox_o object_id, wimp_event_no event_num, nevent_wimp_handler handler, void* handle)
+ { list*              handlers;
+   wimp_handler_info* handler_info;
+
+   assert(initialised);
+   assert(event_num < event_limit || event_num == nevent_ALL_EVENTS);
+   assert(handler != NULL);
+
+   handler_info = list_alloc_element(sizeof(wimp_handler_info));
+   handler_info->object_id  = object_id;
+   handler_info->handler    = handler;
+   handler_info->handle     = handle;
+
+   if (event_num == nevent_ALL_EVENTS)
+    { handlers = all_events_handler_list;
+    }
+   else
+    { handlers = handler_list[event_num];
+
+      nevent_support_mask &= ~(1u << event_num);  /* Allow event to be handled */
+    }
+
+   list_cons(handlers, handler_info);
+ }
+
+
+
+
+static void nevent_remove_from_list(list* handlers, toolbox_o object_id, nevent_wimp_handler handler, void* handle)
+ { wimp_handler_info* handler_info;
+
+#ifndef NDEBUG
+   if (list_is_empty(handlers))
+    { fprintf
+       ( stderr,
+         "Error: Unable to deregister nevent_wimp_handler %p on object %p for event %u with handle %p\n",
+         handler,
+         object_id,
+         debug_event_num,
+         handle
+       );
+      return;
+    }
+#endif
+
+   handler_info = list_remove_head(handlers);
+   if
+    ( handler_info->object_id == object_id   &&
+      handler_info->handler   == handler     &&
+      handler_info->handle    == handle
+    )
+    { list_free_element(handler_info);
+    }
+   else
+    { nevent_remove_from_list(handlers, object_id, handler, handle);
+      list_cons(handlers, handler_info);
+    }
+ }
+
+
+
+
+void nevent_wimp_deregister_handler(toolbox_o object_id, wimp_event_no event_num, nevent_wimp_handler handler, void* handle)
+ { assert(initialised);
+   assert(event_num < event_limit || event_num == nevent_ALL_EVENTS);
+   assert(handler != NULL);
+
+#ifndef NDEBUG
+   debug_event_num = event_num;
+#endif
+
+   if (event_num == nevent_ALL_EVENTS)
+    { nevent_remove_from_list(all_events_handler_list, object_id, handler, handle);
+    }
+   else
+    { nevent_remove_from_list(handler_list[event_num], object_id, handler, handle);
+
+      if (list_is_empty(handler_list[event_num]))
+       { nevent_support_mask |= (1u << event_num);  /* Block event */
+       }
+    }
+ }
+
+
+
+
+static void remove_all_from_list(list* handlers, toolbox_o object_id)
+ { if (!list_is_empty(handlers))
+    { wimp_handler_info* handler_info;
+
+      handler_info = list_remove_head(handlers);
+      if (handler_info->object_id == object_id)
+       { list_free_element(handler_info);
+       }
+      else
+       { remove_all_from_list(handlers, object_id);
+         list_cons(handlers, handler_info);
+       }
+    }
+ }
+
+
+
+
+void nevent_wimp_deregister_all_handlers(toolbox_o object_id)
+ { unsigned event_num;
+
+   assert(initialised);
+   assert(object_id != nevent_ALL_OBJECTS);
+
+   nevent_support_mask = 0; /* All events enabled */
+   for (event_num = 0; event_num < event_limit; event_num++)
+    { remove_all_from_list(handler_list[event_num], object_id);
+
+      if (list_is_empty(handler_list[event_num]))
+       { /* No handlers so block event */
+         nevent_support_mask |= (1u << event_num);
+       }
+    }
+
+   remove_all_from_list(all_events_handler_list, object_id);
+ }
+
+
+
+
+#ifndef NDEBUG
+/* Clear up memory used - only needed in debug code, because OS does it automatically
+ * but tidying up stop memory leak checkers (e.g. MemCheck) from listing all the
+ * memory we used
+ */
+static void tidy_up(void)
+ { unsigned n;
+
+   for (n = 0; n < event_limit; n++)
+    { list_destroy(handler_list[n]);
+    }
+
+   list_destroy(all_events_handler_list);
+ }
+#endif
+
+
+
+
+void nevent_wimp_initialise(void)
+ { unsigned n;
+
+   assert(!initialised);
+
+   for (n = 0; n < event_limit; n++)
+    { handler_list[n] = list_create();
+    }
+
+   all_events_handler_list = list_create();
+
+   nevent_support_register_dispatcher(nevent_wimp_dispatch);
+
+   /* Disable all events < event_limit */
+   nevent_support_mask = (1u << event_limit)-1;
+
+#ifndef NDEBUG
+   initialised = TRUE;
+   atexit(tidy_up);
+#endif
+ }

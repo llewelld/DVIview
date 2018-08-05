@@ -1,0 +1,52 @@
+!DVIview V1.02
+(c) Paul Field
+
+DVIview allows you to view DVI files such as those produced by TeX and LaTeX.
+Its features include:
+ * A virtual memory system that allows very large documents to be viewed
+   in a small amount of memory
+ * The inclusion of Draw, sprite and JPEG files in DVI documents
+ * Cropping and scaling of Draw, sprite and JPEG files
+ * A versatile and easy-to-use printing system that includes thumbnail
+   and pamphlet printing
+ * The ability to choose paper sizes for documents and to edit paper sizes
+ * Exporting of document pages as Draw files
+ * Interactive help
+ * Multiple views on documents
+ * Multiple documents
+
+For full details of these and DVIview's other features please read the
+!DVIview.Docs.Doc file.
+
+-------------------------------------------------------------------------------
+
+If you are upgrading from V0.92 or earlier you need the new !TeXFonts
+application. If you don't have it (and !DVIview will complain) either contact
+your supplier or the author (address given below).
+
+-------------------------------------------------------------------------------
+
+Please note that although !DVIview is copyright Paul Field and an extremely
+large amount of time and effort has gone into its development, it is completely
+free and you may distribute it as you please (subject to a few conditions,
+which are given in !DVIview.Doc.Docs).
+
+If you find any problems with !DVIview or there's something you wish it did
+(within reason :-) ) let me know and I will try to sort things out.
+
+Here's how to contact me:
+
+Snail-mail address:
+  Paul Field
+  346 Chadwell Heath Lane
+  Chadwell Heath
+  Romford
+  Essex
+  RM6 4YH
+  UK
+
+Tel: UK     :   0 181 598 9676
+     Non-UK : +44 181 598 9676
+
+Email: paulf@dial.pipex.com
+       caug@accu.org

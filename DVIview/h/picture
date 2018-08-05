@@ -1,0 +1,115 @@
+/*** picture.h ***/
+/* A picture is some form of graphic stored in a file.
+ * Currently supported graphics are: Sprite, Draw, JPEG
+ * (c) Paul Field 1996
+ */
+
+
+#ifndef os_H
+#include "os.h"
+#endif
+
+#include "font_set.h"
+
+
+typedef struct picture_str picture;
+/* Pictures can be stored in a list */
+
+
+picture* picture_construct
+ ( const char*   file_name,
+   unsigned      scale_percent_x,
+   unsigned      scale_percent_y,
+   const os_box* clip,
+   int           x,
+   int           y
+ );
+ /* Pre: file_name != NULL
+  *      clip != NULL
+  *      (x,y) is the page coordinate (in Draw units) at which the diagram will appear
+  *      x_scale and y_scale are the scaling factors applied to the picture
+  *      clip contains the amount to clip from each edge of the picture (in Draw units)
+  * Exceptions: exception_NO_MEMORY, os exceptions
+  * Creates a picture from the file 'file_name' and returns it
+  */
+
+
+void picture_destruct(picture* pic);
+ /* Frees the memory associated with 'pic' (pic may be NULL)
+  */
+
+
+void picture_draw(const picture* pic, int x, int y, unsigned scale_percent, const os_box* clip);
+ /* Pre: pic != NULL
+  *      clip != NULL
+  *      We're drawing in the current Wimp mode
+  *      (x,y) is the screen coordinate (in Draw units) of the page origin (i.e. it's top left corner)
+  *      scale_percent is the magnification of the page
+  *      clip is the current graphics clipping rectangle (typically returned by the Wimp)
+  * Exceptions: os exceptions
+  * Draws the picture
+  */
+
+
+void picture_clipped_bounds(const picture* pic, int x, int y, unsigned scale_percent, os_box* bounds);
+ /* Pre: pic != NULL
+  *      clip != NULL
+  *      (x,y) is the screen coordinate (in Draw units) of the page origin (i.e. it's top left corner)
+  *      scale_percent is the magnification of the page
+  * Returns the bounds of the picture in Draw Units after clipping
+  * N.B. if too much is clipped from the picture edges then either or both of these could hold:
+  *    bounds.x0 > bounds.x1
+  *    bounds.y0 > bounds.y1
+  */
+
+
+void picture_unclipped_bounds(const picture* pic, int x, int y, unsigned scale_percent, os_box* bounds);
+ /* Pre: pic != NULL
+  *      clip != NULL
+  *      (x,y) is the screen coordinate (in Draw units) of the page origin (i.e. it's top left corner)
+  *      scale_percent is the magnification of the page
+  * Returns the bounds of the picture in Draw Units before clipping
+  */
+
+
+
+void picture_add_fonts_to_set(const picture* pic, font_set* fonts);
+ /* Pre: pic != NULL
+  *      fonts != NULL
+  * Post: font_set = font_set union the fonts required for pic
+  * Exceptions: exception_NO_MEMORY
+  * On exception some fonts may have been added to font_set
+  */
+
+void picture_file_add_fonts_to_set(const char* file_name, font_set* fonts);
+ /* Pre: file_name != NULL
+  *      fonts != NULL
+  * Post: font_set = font_set union the fonts required for the picture in file_name.
+  * Exceptions: exception_NO_MEMORY, os exceptions, command parsing errors
+  * On exception some fonts may have been added to the font_set
+  */
+
+
+void picture_save(const picture* pic, int x, int y, const font_set* fonts);
+ /* Pre: pic != NULL
+  *      fonts contains all the fonts used in the picture with each id equal to the
+  *        font id used in the font_table object which should have been output before this call
+  *      (x,y) is the top left corner of the page in Draw units
+  * Saves the diagram as a stream of draw objects using the save_buffer module.
+  * N.B. the drawfile format does not cupport clipped objects so the picture will be
+  * output unclipped.
+  * Exceptions: os exceptions
+  */
+
+
+unsigned picture_estimate_save_size(const picture* pic);
+ /* Pre: pic != NULL
+  *      Returns the approximate size of the output produced by picture_save()
+  */
+
+
+#ifndef NDEBUG
+void picture_debug_output(const picture* pic);
+#else
+#define picture_debug_output(p)
+#endif

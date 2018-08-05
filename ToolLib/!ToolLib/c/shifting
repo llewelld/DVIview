@@ -1,0 +1,271 @@
+/*** shifting.c ***/
+/* A shifting heap memory management system that throws exceptions
+ * (uses Acorn's flex routines)
+ * (c) Paul Field 1995
+ */
+
+#include "shifting.h"
+
+#include <assert.h>
+#include "flex.h"
+#include "kernel.h"
+#include "toolbox.h"
+
+#include "exception.h"
+#include "tbx.h"
+
+#ifdef MemCheck_MEMCHECK
+#include "MemCheck:MemCheck.h"
+#endif
+
+
+enum { NeverReachHere = FALSE }; /* Debugging constant */
+
+#ifndef NDEBUG
+static bool shifting_initialised = FALSE;
+#endif
+
+
+/* Stores the current malloc extension state */
+static shifting_extension extension_state = shifting_malloc_extension_stopped;
+
+
+
+
+void shifting_allocate(shifting_ptr anchor, size_t size)
+ { assert(anchor != NULL);
+   assert(shifting_initialised);
+
+#ifdef MemCheck_MEMCHECK
+   MemCheck_SetChecking(0,0);
+#endif
+
+   if (!flex_alloc(anchor, size))
+    { throw_user(exception_NO_MEMORY);
+    }
+
+#ifdef MemCheck_MEMCHECK
+   MemCheck_RegisterFlexBlock(anchor, size);
+   MemCheck_SetChecking(1,1);
+#endif
+ }
+
+
+
+
+void shifting_free(shifting_ptr anchor)
+ { assert(anchor != NULL);
+   assert(shifting_initialised);
+
+#ifdef MemCheck_MEMCHECK
+   MemCheck_SetChecking(0,0);
+#endif
+
+   if (*anchor != NULL)
+    { flex_free(anchor);
+    }
+
+#ifdef MemCheck_MEMCHECK
+   MemCheck_UnRegisterFlexBlock(anchor);
+   MemCheck_SetChecking(1,1);
+#endif
+
+ }
+
+
+
+
+size_t shifting_size(shifting_ptr anchor)
+ { assert(anchor != NULL);
+   assert(*anchor != NULL);
+   assert(shifting_initialised);
+
+   return flex_size(anchor);
+ }
+
+
+
+
+void shifting_extend_by(shifting_ptr anchor, size_t num_bytes_to_add)
+ { assert(anchor != NULL);
+   assert(*anchor != NULL);
+   assert(shifting_initialised);
+
+#ifdef MemCheck_MEMCHECK
+   MemCheck_SetChecking(0,0);
+#endif
+
+   if (!flex_extend(anchor, flex_size(anchor) + num_bytes_to_add))
+    { throw_user(exception_NO_MEMORY);
+    }
+
+#ifdef MemCheck_MEMCHECK
+   MemCheck_ResizeFlexBlock(anchor, flex_size(anchor));
+   MemCheck_SetChecking(1,1);
+#endif
+ }
+
+
+
+
+void shifting_shrink_by(shifting_ptr anchor, size_t num_bytes_to_remove)
+ { bool shrink_succeeded;
+
+   assert(anchor != NULL);
+   assert(*anchor != NULL);
+   assert(shifting_initialised);
+   assert(num_bytes_to_remove <= shifting_size(anchor));
+
+#ifdef MemCheck_MEMCHECK
+   MemCheck_SetChecking(0,0);
+#endif
+
+   shrink_succeeded = flex_extend(anchor, flex_size(anchor) - (int)num_bytes_to_remove);
+   assert(shrink_succeeded);  /* It will always succeed */
+
+#ifdef MemCheck_MEMCHECK
+   MemCheck_ResizeFlexBlock(anchor, flex_size(anchor));
+   MemCheck_SetChecking(1,1);
+#endif
+ }
+
+
+
+
+void shifting_alter_size(shifting_ptr anchor, size_t new_size)
+ { assert(anchor != NULL);
+   assert(*anchor != NULL);
+   assert(shifting_initialised);
+
+#ifdef MemCheck_MEMCHECK
+   MemCheck_SetChecking(0,0);
+#endif
+
+   if (!flex_extend(anchor, new_size))
+    { throw_user(exception_NO_MEMORY);
+    }
+
+#ifdef MemCheck_MEMCHECK
+   MemCheck_ResizeFlexBlock(anchor, flex_size(anchor));
+   MemCheck_SetChecking(1,1);
+#endif
+ }
+
+
+
+
+void shifting_insert_bytes(shifting_ptr anchor, unsigned at, size_t num_bytes_to_add)
+ { assert(anchor != NULL);
+   assert(*anchor != NULL);
+   assert(shifting_initialised);
+
+#ifdef MemCheck_MEMCHECK
+   MemCheck_SetChecking(0,0);
+#endif
+
+   if (!flex_midextend(anchor, at, num_bytes_to_add))
+    { throw_user(exception_NO_MEMORY);
+    }
+
+#ifdef MemCheck_MEMCHECK
+   MemCheck_ResizeFlexBlock(anchor, flex_size(anchor));
+   MemCheck_SetChecking(1,1);
+#endif
+ }
+
+
+
+
+void shifting_remove_bytes(shifting_ptr anchor, unsigned at, size_t num_bytes_to_remove)
+ { assert(anchor != NULL);
+   assert(*anchor != NULL);
+   assert(shifting_initialised);
+   assert(num_bytes_to_remove <= shifting_size(anchor) - at);
+
+#ifdef MemCheck_MEMCHECK
+   MemCheck_SetChecking(0,0);
+#endif
+
+   flex_midextend(anchor, at+num_bytes_to_remove, -(int)num_bytes_to_remove);
+
+#ifdef MemCheck_MEMCHECK
+   MemCheck_ResizeFlexBlock(anchor, flex_size(anchor));
+   MemCheck_SetChecking(1,1);
+#endif
+ }
+
+
+
+
+/* If MemCheck is being used, use a wrapper that disables checking for flex_budge */
+#ifdef MemCheck_MEMCHECK
+static int shifting_budge(int n, void **a)
+ { int result;
+
+   MemCheck_SetChecking(0,0);
+   result = flex_budge(n,a);
+   MemCheck_SetChecking(1,1);
+   return result;
+ }
+#else
+#define shifting_budge flex_budge
+#endif
+
+
+
+
+void shifting_allow_malloc_extension(void)
+ { assert(shifting_initialised);
+
+   _kernel_register_slotextend(shifting_budge);
+   extension_state = shifting_malloc_extension_allowed;
+ }
+
+
+
+
+void shifting_stop_malloc_extension(void)
+ { assert(shifting_initialised);
+
+   _kernel_register_slotextend(flex_dont_budge);
+   extension_state = shifting_malloc_extension_stopped;
+ }
+
+
+
+
+shifting_extension shifting_set_malloc_extension(shifting_extension new_state)
+ { shifting_extension current_state = extension_state;
+
+   switch(new_state)
+    { case shifting_malloc_extension_allowed: shifting_allow_malloc_extension(); break;
+      case shifting_malloc_extension_stopped: shifting_stop_malloc_extension();  break;
+      default: assert(NeverReachHere);
+    }
+
+   return current_state;
+ }
+
+
+
+
+void shifting_initialise(const char* program_name, const messagetrans_control_block* error_messages)
+ { assert(program_name != NULL);
+   assert(!shifting_initialised);
+
+   flex_init((char*)program_name, (int*)error_messages);
+
+#ifndef NDEBUG
+   shifting_initialised = TRUE;
+#endif
+ }
+
+
+
+
+void shifting_initialise_for_toolbox(void)
+ { messagetrans_control_block messages;
+
+   toolboxgetsysinfo_message_trans_control_block(&messages);
+   shifting_initialise(tbx_task_name(), &messages);
+ }

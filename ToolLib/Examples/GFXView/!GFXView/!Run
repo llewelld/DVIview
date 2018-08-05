@@ -1,0 +1,46 @@
+| !Run file for !GFXView
+| (c) Paul Field
+
+IconSprites <Obey$Dir>.!Sprites
+
+Set GFXView$Dir <Obey$Dir>
+
+RMEnsure UtilityModule 3.10 Error !GFXView can only be run on RISC OS 3.10 or later
+
+RMEnsure FilterManager 0.09 RMLoad System:modules.FilterMgr
+RMEnsure FilterManager 0.09 Error You need filter manager 0.09 or later to run !GFXView
+
+RMEnsure BorderUtils 0.02 RMEnsure WindowManager 3.17  RMLoad System:modules.BorderUtil
+
+RMEnsure Toolbox    0.00  RMLOAD System:modules.toolbox.toolbox
+RMEnsure Toolbox    1.23  ERROR You need toolbox 1.23 or later to run !GFXView
+RMEnsure Window     0.00  RMLOAD System:modules.toolbox.window
+RMEnsure Window     1.15  ERROR You need window 1.15 or later to run !GFXView
+RMEnsure Menu       0.00  RMLOAD System:modules.toolbox.menu
+RMEnsure Menu       0.15  ERROR You need menu 0.15 or later to run !GFXView
+RMEnsure Iconbar    0.00  RMLOAD System:modules.toolbox.iconbar
+RMEnsure Iconbar    1.08  ERROR You need iconbar 1.08 or later to run !GFXView
+RMEnsure ProgInfo   0.00  RMLOAD System:modules.toolbox.proginfo
+RMEnsure ProgInfo   0.05  ERROR You need proginfo 0.05 or later to run !GFXView
+RMEnsure Scale      0.00  RMLOAD System:modules.toolbox.scale
+RMEnsure Scale      0.03  ERROR You need scale 0.03 or later to run !GFXView
+
+RMEnsure DrawFile   0.00  RMLOAD System:modules.DrawFile
+RMEnsure DrawFile   1.30  ERROR You need DrawFile 1.30 or later to run !GFXView
+
+
+|Check to see whether we can use JPEGs
+set GFXView$AllowJPEGs 1
+RMEnsure SpriteExtend 0.99 unset GFXView$AllowJPEGs
+
+
+|You may need to increase the WimpSlot for the debug version
+WimpSlot -min 36k -max 36k
+|WimpSlot -min 512k -max 512k
+
+If "<GFXView$Running>" <> "" then Error !GFXView is already running
+Set GFXView$Running Yes
+
+Run <GFXView$Dir>.!RunImage
+
+unset GFXView$Running

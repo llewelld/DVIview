@@ -1,0 +1,47 @@
+/*** var_stack.h ***/
+/* Stack for dvi variables
+ * (c) Paul Field
+ */
+
+/* Stack is a singleton object because only one page can be loading at a time */
+
+
+/* dvi variables */
+
+typedef struct dvi_vars
+ { int h,v,w,x,y,z;
+ }dvi_vars;
+
+
+
+void var_stack_construct(void);
+ /* Pre: stack is not currently constructed
+  * Exceptions: exception_NO_MEMORY
+  *
+  * Sets up an empty stack
+  */
+
+
+void var_stack_destruct(void);
+ /* Pre: stack is currently constructed
+  * Exceptions: none
+  *
+  * stack is no longer constructed
+  */
+
+
+void var_stack_push(const dvi_vars* vars);
+ /* Pre: stack is currently constructed
+  * Exceptions: exception_NO_MEMORY
+  *
+  * Pushes vars onto the top of the stack
+  */
+
+
+void var_stack_pop(dvi_vars* vars);
+ /* Pre: stack is currently constructed
+  *      stack contains at least one set of variables
+  *      vars points to a (possibly undefined) dvi-vars
+  *
+  * Pops the top of the stack and places the popped value in vars
+  */

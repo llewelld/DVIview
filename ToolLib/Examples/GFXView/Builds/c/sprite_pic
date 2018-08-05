@@ -1,0 +1,169 @@
+/*** sprite_pic.c ***/
+/* Routines for loading and displaying a sprite
+ * (c) Paul Field 1995
+ */
+
+
+#include "sprite_pic.h"
+
+#include <assert.h>
+#include "colourtrans.h"
+#include "osspriteop.h"
+#include "osfile.h"
+#include "wimp.h"
+#include "wimpreadsysinfo.h"
+
+#include "allocate.h"
+#include "exception.h"
+#include "shifting.h"
+
+
+
+struct sprite_pic_str
+ { osspriteop_area *sprite;
+ };
+
+
+
+
+sprite_pic *sprite_pic_create(const char *file_name)
+ { int        size;
+   bits       file_type;
+   sprite_pic *pic;
+
+   osfile_read_stamped_no_path(file_name, NULL, NULL, &size, NULL, &file_type);
+   assert(file_type == osfile_TYPE_SPRITE);
+
+   /* Sprite files miss off part of the sprite area header
+    * so add this missing bit to the file size to give the amount of memory we need
+    */
+   size += offsetof(osspriteop_area, sprite_count);
+
+   pic = memory_allocate(sizeof(*pic));
+   pic->sprite = NULL;   /* It's OK to 'free' a NULL */
+
+   try
+    { shifting_allocate((shifting_ptr)&pic->sprite, size);
+
+      pic->sprite->size         = size;
+      pic->sprite->sprite_count = 0;
+      pic->sprite->first        = sizeof(osspriteop_area);
+      pic->sprite->used         = pic->sprite->first;
+      osspriteop_load_sprite_file(osspriteop_USER_AREA, pic->sprite, file_name);
+    }
+   catch
+    { sprite_pic_destroy(pic);
+      throw();
+    }
+   catch_end
+
+   return pic;
+ }
+
+
+
+
+void sprite_pic_destroy(sprite_pic *pic)
+ { if (pic != NULL)
+    { shifting_free((shifting_ptr)&pic->sprite);
+      memory_free(pic);
+    }
+ }
+
+
+
+
+void sprite_pic_draw(const sprite_pic *pic, int origin_x, int origin_y, unsigned scale_percent, const os_box *clip)
+ { osspriteop_header                     *sprite;
+   os_factors                            scale_factors;
+   osspriteop_TRANS_TAB(256*sizeof(int)) colour_translation;  /* The largest possible translation table */
+   int			                 log2_bpp;
+   bool                                  wide_translation_entries;
+
+   assert(pic != NULL);
+   NOT_USED(clip);
+
+   sprite = (osspriteop_header *)((byte *)pic->sprite + pic->sprite->first);
+
+   /* Find out how the Wimp would plot the sprite */
+   /* This gives us scale factors and a colour translation table.
+    * The translation table assumes that palette-less sprites use desktop
+    * colours - colourtrans assumes the default palette
+    */
+   wimp_read_pix_trans
+    ( osspriteop_PTR,
+      pic->sprite,
+      (osspriteop_id) sprite,
+      &scale_factors,
+      (osspriteop_trans_tab *) &colour_translation
+    );
+   wide_translation_entries = FALSE;
+
+
+   /* The wimp gives an undefined colour translation table for 8 bits-per-pixel and above modes
+    * so we ask colourtrans for help.
+    */
+   os_read_mode_variable(sprite->mode, os_MODEVAR_LOG2_BPP, &log2_bpp);
+   if (log2_bpp >= 3)
+    { /* Wide translation table entries are available in RISC OS 3.5 and above
+       * but we can only pass them to osspriteop_put_sprite_scaled() in RISC OS 3.6 and above
+       */
+      wide_translation_entries = (wimpreadsysinfo_version() >= 360);
+
+      colourtrans_select_table_for_sprite
+       ( pic->sprite,
+         (osspriteop_id) sprite,
+         colourtrans_CURRENT_MODE,
+         colourtrans_CURRENT_PALETTE,
+         (osspriteop_trans_tab *) &colour_translation,
+         colourtrans_GIVEN_SPRITE + (wide_translation_entries ? colourtrans_RETURN_WIDE_ENTRIES : 0)
+       );
+    }
+
+   /* Adjust scale factors to include the scale of scale_percent/100 */
+   scale_factors.xmul *= scale_percent;
+   scale_factors.xdiv *= 100;
+
+   scale_factors.ymul *= scale_percent;
+   scale_factors.ydiv *= 100;
+
+   /* Draw the sprite */
+   osspriteop_put_sprite_scaled
+    ( osspriteop_PTR,
+      pic->sprite,
+      (osspriteop_id) sprite,
+      origin_x,
+      origin_y,
+      os_ACTION_OVERWRITE + osspriteop_USE_MASK + (wide_translation_entries ? osspriteop_GIVEN_WIDE_ENTRIES : 0),
+      &scale_factors,
+      (osspriteop_trans_tab *) &colour_translation
+    );
+ }
+
+
+
+
+void sprite_pic_size(const sprite_pic *pic, unsigned *width, unsigned *height)
+ { osspriteop_id  sprite;
+   os_mode        mode;
+   int            sprite_width;
+   int            sprite_height;
+   int            x_eig;
+   int            y_eig;
+
+   assert(pic != NULL);
+   assert(width != NULL);
+   assert(height != NULL);
+
+   sprite = (osspriteop_id)((byte *)pic->sprite + pic->sprite->first);
+   osspriteop_read_sprite_size(osspriteop_PTR, pic->sprite, sprite, &sprite_width, &sprite_height, NULL, &mode);
+
+   /* Read x_eig and y_eig for the sprite's mode so we can convert from pixels
+    * (the units of sprite_width and sprite_height) to OS units
+    */
+   os_read_mode_variable(mode, os_MODEVAR_XEIG_FACTOR, &x_eig);
+   os_read_mode_variable(mode, os_MODEVAR_YEIG_FACTOR, &y_eig);
+
+   *width  = (sprite_width  << x_eig);
+   *height = (sprite_height << y_eig);
+ }

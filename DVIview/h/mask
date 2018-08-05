@@ -1,0 +1,67 @@
+/**** mask.h ****/
+/* (c) Paul Field 1996
+ */
+
+/* The Drawfile format does not provide facilities for objects to be clipped.
+ * To achieve the effect of clipping a number of white rectangles are drawn over parts of
+ * the objects, these rectangles are called the mask.
+ *
+ * A mask is not the perfect solution to the clipping problem. If two objects overlap (when
+ * unclipped) and are both clipped on an edge that overlaps then the white rectangle used to
+ * 'clip' one will obscure the other shape.
+ *
+ * There are several ways to implement a mask each of which will cause different behaviour in
+ * the problem case mentioned above. This implementation clips as much as possible but will
+ * never cover up part of an object that should not be covered.
+ *
+ * Formally:
+ *   mask = (to_cover, holes)
+ *   where to_cover and holes are (infinite) sets of points
+ *
+ *   points covered by mask = to_cover - holes
+ *
+ * Typically, you would add the bound box of an object to to_cover and then add the visible
+ * part of the object to holes.
+ */
+
+
+#ifndef os_H
+#include "os.h"
+#endif
+
+typedef struct mask_str mask;
+
+
+mask* mask_construct(void);
+ /* Exceptions: exception_NO_MEMORY
+  * Creates an empty mask
+  */
+
+
+void mask_destruct(mask* m);
+ /* Destroys m. (m may be NULL)
+  */
+
+
+void mask_cover(mask* m, const os_box* cover);
+ /* Pre: m != NULL
+  *      boxdebug_is_valid(cover)
+  * Exceptions: exception_NO_MEMORY
+  * Add the points in cover to the points covered by the mask
+  */
+
+
+void mask_hole(mask* m, const os_box* hole);
+ /* Pre: boxdebug_is_valid(hole)
+  *      m != NULL
+  * Exceptions: exception_NO_MEMORY
+  * Add the points hole to the points not covered by the mask
+  */
+
+
+void mask_save(const mask* m);
+ /* Pre: m != NULL
+  * Exceptions: exception_NO_MEMORY
+  * Saves white rectangles covering the points specified in m
+  * to the save_buffer as Drawfile objects.
+  */

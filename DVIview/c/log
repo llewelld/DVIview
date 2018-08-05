@@ -1,0 +1,369 @@
+/**** log.c ****/
+/* Log window
+ * (c) Paul Field
+ */
+
+/* This uses a very simple data structure: a set of tuples <source, sub_source, text>.
+ * To avoid the memory costs of storing identical strings in many different tuples,
+ * the strings are stored in a separate set and the structure that represent the tuples
+ * use pointers the the string. One benefit is that strings can be compared for equality by
+ * pointer comparison (since strings are stored in a set, equal strings are the same string).
+ *
+ * A more effective data structure would be something like a set of sections where each
+ * section contained a set of sub-sections where each sub-section contained a set of messages.
+ * This would allow more efficient addition of messages (since the structure is tree-like and
+ * the current set routines have linear complexity for insertion) and the opportunity for
+ * more intelligent window updates and redraws (since (sub-)sections can know how much space
+ * they requie in the window.
+ */
+
+
+#include "log.h"
+
+#include <assert.h>
+#include <string.h>
+
+#include "macros.h"
+
+#include "colourtrans.h"
+#include "window.h"
+
+#include "allocate.h"
+#include "exception.h"
+#include "nev_wimp.h"
+#include "nev_toolbox.h"
+#include "set.h"
+#include "tbx.h"
+#include "text_plot.h"
+
+
+static toolbox_o log_id;
+static set*      log_message_set; /* Set of messages in the log */
+static set*      string_set;      /* Set of strings used in the log messages (always contains "") */
+static int       log_width;       /* Width of the log viewer's extent in OS units */
+static int       log_height_min;  /* Minimum height of log viewer's extent is OS units */
+
+
+#ifndef NDEBUG
+static bool initialised = FALSE;
+#endif
+
+
+typedef struct log_message_str
+ { const char* source;
+   const char* sub_source;
+   const char* text;
+ }log_message;
+
+
+
+enum
+ { spacing = 8,     /* spacing between lines */
+   line_height = wimp_CHAR_YSIZE + spacing
+ };
+
+
+
+/*** routines for managing a set of strings ***/
+
+static size_t size_of_string(const void* vstring)
+ { const char* string = vstring;
+
+   return strlen(string)+1;
+ }
+
+
+
+static int compare_strings(const void* vstring1, const void* vstring2)
+ { const char* string1 = vstring1;
+   const char* string2 = vstring2;
+
+   return strcmp(string1, string2);
+ }
+
+
+
+
+static int compare_messages(const void* vmessage1, const void* vmessage2)
+ { const log_message* message1 = vmessage1;
+   const log_message* message2 = vmessage2;
+
+   /* Message strings are all stored in a set so equal strings are the same string
+    * i.e. (strcmp(s1, s2) == 0)  <-->  s1 == s2
+    */
+
+   if (message1->source != message2->source)
+    { return strcmp(message1->source, message2->source);
+    }
+
+   if (message1->sub_source != message2->sub_source)
+    { return strcmp(message1->sub_source, message2->sub_source);
+    }
+
+   if (message1->text != message2->text)
+    { return strcmp(message1->text, message2->text);
+    }
+
+   /* Messages are the same - return 0 */
+   return 0;
+ }
+
+
+
+
+static void rectangle_fill(int x, int y, unsigned width, unsigned height)
+ { os_plot(os_MOVE_TO, x, y);
+   os_plot(os_PLOT_RECTANGLE + os_PLOT_BY, width, height);
+ }
+
+
+
+
+static void plot_heading(const char* heading, int x, int y, os_colour foreground, os_colour background)
+ { colourtrans_set_gcol(background, colourtrans_SET_FG, os_ACTION_OVERWRITE, NULL);
+   rectangle_fill(x, y - text_plot_baseline_adjustment - spacing/2, log_width, line_height);
+
+   text_plot_set_colours(foreground, background);
+   text_plot(heading, x, y);
+ }
+
+
+
+
+static void plot_messages(int x, int y)
+ { set_ptr     sptr;
+   const char* empty_string;
+   const char* current_source;
+   const char* current_sub_source;
+
+   empty_string = set_contains(string_set, "");
+   assert(empty_string != NULL);
+
+   current_source     = empty_string;
+   current_sub_source = empty_string;
+
+
+   /* (x,y) is top left of window. Move y to bottom of first line */
+
+   y -= line_height - spacing;
+
+
+   for (sptr = set_ptr_first(log_message_set); !set_ptr_past_the_end(sptr); set_ptr_inc(&sptr))
+    { log_message* message;
+
+      message = set_ptr_element(sptr);
+
+      if (current_source != message->source)
+       { plot_heading(message->source, x, y, os_COLOUR_WHITE, os_COLOUR_BLACK);
+         current_source = message->source;
+         current_sub_source = empty_string;
+
+         y -= line_height;
+       }
+
+      if (current_sub_source != message->sub_source)
+       { plot_heading(message->sub_source, x, y, os_COLOUR_BLACK, os_COLOUR_LIGHT_GREY);
+         current_sub_source = message->sub_source;
+
+         y -= line_height;
+       }
+
+      text_plot_set_colours(os_COLOUR_BLACK, os_COLOUR_VERY_LIGHT_GREY);
+      text_plot(message->text, x, y);
+
+      y -= line_height;
+    }
+ }
+
+
+
+
+
+static unsigned calculate_height(void)
+ { set_ptr     sptr;
+   const char* empty_string;
+   const char* current_source;
+   const char* current_sub_source;
+   unsigned    height;
+
+   empty_string = set_contains(string_set, "");
+   assert(empty_string != NULL);
+
+   current_source     = empty_string;
+   current_sub_source = empty_string;
+
+
+   /* Move to bottom of first line */
+
+   height = 0;
+
+   for (sptr = set_ptr_first(log_message_set); !set_ptr_past_the_end(sptr); set_ptr_inc(&sptr))
+    { log_message* message;
+
+      message = set_ptr_element(sptr);
+
+      if (current_source != message->source)
+       { current_source = message->source;
+         current_sub_source = empty_string;
+
+         height += line_height;
+       }
+
+      if (current_sub_source != message->sub_source)
+       { current_sub_source = message->sub_source;
+
+         height += line_height;
+       }
+
+      height += line_height;
+    }
+
+   return height;
+ }
+
+
+
+
+
+static nevent_result redraw(wimp_event_no event_code, wimp_block* event, toolbox_block* id_block, void* handle)
+ { bool  more;
+   int   origin_x;
+   int   origin_y;
+
+   assert(event_code == wimp_REDRAW_WINDOW_REQUEST);
+   assert(event);
+   NOT_USED(id_block);
+   NOT_USED(event_code);
+   NOT_USED(handle);
+
+   more = wimp_redraw_window(&event->redraw);
+
+   origin_x = event->redraw.box.x0 - event->redraw.xscroll;
+   origin_y = event->redraw.box.y1 - event->redraw.yscroll;
+
+   try
+    { while (more)
+       { plot_messages(origin_x, origin_y);
+         more = wimp_get_rectangle(&event->redraw);
+       }
+    }
+   catch
+    { /* Close window to avoid infinite loops if error box causes more redraws */
+      toolbox_hide_object(0, id_block->this_obj);
+      throw();
+    }
+   catch_end
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+
+static nevent_result hide(bits event_code, toolbox_action* event, toolbox_block* id_block, void* handle)
+ { set* empty_message_set;
+   set* empty_string_set;
+
+   assert(event_code == action_WINDOW_DIALOGUE_COMPLETED);
+
+   NOT_USED(id_block);
+   NOT_USED(event);
+   NOT_USED(event_code);
+   NOT_USED(handle);
+
+   /* set_create() can fail, so we get a new empty set before destroying the old one -
+    * that way we always have a valid set
+    */
+
+   empty_message_set = set_create(compare_messages, NULL, sizeof(log_message));
+   empty_string_set  = set_create(compare_strings, size_of_string, 0);
+   set_insert(empty_string_set, "");
+
+   set_destroy(log_message_set);
+   set_destroy(string_set);
+
+   log_message_set = empty_message_set;
+   string_set      = empty_string_set;
+
+   return nevent_HANDLED;
+ }
+
+
+
+
+
+static void update_log_window(const log_message* message)
+ { os_box   extent;
+   unsigned height;
+
+   NOT_USED(message);
+
+   /* Show window if it was hidden */
+   toolbox_show_object(0, log_id, toolbox_POSITION_DEFAULT, NULL, toolbox_NULL_OBJECT, toolbox_NULL_COMPONENT);
+
+   /* Set new extent */
+   window_get_extent(0, log_id, &extent);
+   height = calculate_height();
+   extent.y0 = -MAX(height, log_height_min);
+   window_set_extent(0, log_id, &extent);
+
+   /* Redraw whole window */
+   window_force_redraw(0, log_id, &extent);
+ }
+
+
+
+
+void log_init(void)
+ { os_box    extent;
+
+   assert(!initialised);
+
+   log_message_set = set_create(compare_messages, NULL, sizeof(log_message));
+   string_set      = set_create(compare_strings, size_of_string, 0);
+   set_insert(string_set, "");
+
+   log_id = tbx_shared_object_id("Log");
+   nevent_wimp_register_handler(log_id, wimp_REDRAW_WINDOW_REQUEST, redraw, NULL);
+   nevent_toolbox_register_handler(log_id, action_WINDOW_DIALOGUE_COMPLETED, hide, NULL);
+
+   window_get_extent(0, log_id, &extent);
+   log_width      = extent.x1 - extent.x0;
+   log_height_min = extent.y1 - extent.y0;
+
+
+#ifndef NDEBUG
+   initialised = TRUE;
+#endif
+ }
+
+
+
+
+void log_add_message(const char* source, const char* message_text)
+ { assert(initialised);
+   assert(source != NULL);
+   assert(message_text != NULL);
+
+   log_add_sub_message(source, "", message_text);
+ }
+
+
+
+
+void log_add_sub_message(const char* source, const char* sub_source, const char* message_text)
+ { log_message message;
+
+   set_insert(string_set, source);
+   set_insert(string_set, sub_source);
+   set_insert(string_set, message_text);
+
+   message.source     = set_contains(string_set, source);
+   message.sub_source = set_contains(string_set, sub_source);
+   message.text       = set_contains(string_set, message_text);
+
+   if (set_insert(log_message_set, &message))
+    { update_log_window(&message);
+    }
+ }

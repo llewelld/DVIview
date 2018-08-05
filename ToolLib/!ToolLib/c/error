@@ -1,0 +1,139 @@
+/*** error.c ***/
+/* error reporting (via wimp_report_error)
+ * (c) Paul Field
+ */
+
+#include "error.h"
+
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "macros.h"
+#include "toolbox.h"
+#include "wimp.h"
+
+#include "allocate.h"
+#include "message.h"
+#include "tbx.h"
+
+/* Constant used for debugging:
+ * place "assert(NeverReachHere);" at theoretically unreachable points of the code
+ */
+enum { NeverReachHere = FALSE };
+
+
+
+void error_report_exception(const exception* e)
+ { assert(e != NULL);
+
+   switch(e->type)
+    { case exception_signal: error_report_signal(e->error.signal_id); break;
+      case exception_os:     error_report_os(e->error.os);            break;
+      case exception_user:   error_report_user(e->error.user_id);     break;
+      default:               assert(NeverReachHere);
+    }
+ }
+
+
+
+
+void error_report_os(const os_error* error)
+ { assert(error != NULL);
+
+   wimp_report_error(error, 0, tbx_task_name());
+ }
+
+
+
+
+void error_report_user(unsigned error_id)
+ { char token_name[4+HEX_WIDTH];  /* 4 = strlen("Err") + terminator */
+
+   sprintf(token_name, "Err%.5x", error_id);
+   error_report_string(message_lookup(token_name));
+ }
+
+
+
+
+void error_report_string(const char* string)
+ { error_report_os(error_from_string(string));
+ }
+
+
+
+
+void error_report_signal(unsigned signal_id)
+ { char        token_name[5];  /* 5 = strlen("Sig") + 1 hex digit + terminator */
+   const char* signal_name;
+   char*       signal_name_copy;
+
+   /* Only 1 hex digit has been allowed for the signal number */
+   assert(signal_id <= 0xf);
+   if (signal_id > 0xf)
+    { signal_id = 0xf;
+    }
+
+   /* Get the name of the signal */
+   sprintf(token_name, "Sig%.1x", signal_id);
+   signal_name = message_lookup(token_name);
+
+   /* Try to make a copy of the signal name */
+   try
+    { signal_name_copy = memory_allocate(strlen(signal_name)+1);
+      strcpy(signal_name_copy, signal_name);
+    }
+   catch
+    { signal_name_copy = NULL;
+    }
+   catch_end
+
+   /* Report the error and see if the user wants to quit */
+   if (!error_query(error_from_string(message_lookup_and_substitute("SigQuery", signal_name_copy, NULL, NULL, NULL))))
+    { exit(EXIT_FAILURE);
+    }
+   memory_free(signal_name_copy);
+ }
+
+
+
+
+os_error* error_from_string(const char* string)
+ { static os_error error;
+
+   assert(string != NULL);
+
+   strncpy(error.errmess, string, sizeof(error.errmess)-1);
+   error.errmess[sizeof(error.errmess)-1] = '\0';
+   error.errnum = 0;
+
+   return &error;
+ }
+
+
+
+
+bool error_query(const os_error* error)
+ { wimp_error_box_selection   selection;
+   const wimp_error_box_flags query_box_flags = wimp_ERROR_BOX_SHORT_TITLE | wimp_ERROR_BOX_OK_ICON | wimp_ERROR_BOX_CANCEL_ICON;
+
+   assert(error != NULL);
+
+   selection = wimp_report_error(error, query_box_flags, tbx_task_name());
+   return selection == wimp_ERROR_BOX_OK_ICON;
+ }
+
+
+
+
+void error_report_information(const char* string)
+ { wimp_report_error_by_category
+    ( error_from_string(string),
+      wimp_ERROR_BOX_SHORT_TITLE + (wimp_ERROR_BOX_CATEGORY_INFO << wimp_ERROR_BOX_CATEGORY_SHIFT),
+      tbx_task_name(),
+      NULL,
+      (osspriteop_area*)1,  /* Wimp sprite area */
+      0
+    );
+ }

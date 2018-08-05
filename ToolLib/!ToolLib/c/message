@@ -1,0 +1,99 @@
+/**** message.c ****/
+/* Interface to messagetrans
+ * (c) Paul Field
+ */
+
+#include "message.h"
+
+#include <assert.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+
+#include "messagetrans.h"
+#include "toolbox.h"
+
+#include "exception.h"
+#include "allocate.h"
+
+
+/* The message buffer grows as necessary to accomodate messages */
+static char*    message_buffer = NULL;
+static unsigned message_buffer_size = 0;
+
+
+
+const char* message_lookup(const char* tag)
+ { return message_lookup_and_substitute(tag, NULL, NULL, NULL, NULL);
+ }
+
+
+
+const char* message_lookup_and_substitute(const char* tag, const char* p1, const char* p2, const char* p3, const char* p4)
+ { assert(tag);
+
+   try
+    { int length;
+      messagetrans_control_block messages;
+
+      toolboxgetsysinfo_message_trans_control_block(&messages);
+
+      /* Calculate the length that the message will be */
+      messagetrans_lookup(&messages, tag, 0, 0, p1,p2,p3,p4, &length);
+
+      /* messagetrans does not add the lengths of p1-p4 to the length :-(
+       * We add them ourselves, but it will be an overestimate because we don't
+       * take into account parameters that are not substituted into the string
+       * and the %0, %1 etc that are removed
+       * - I'm beginning to wonder if simply using a fixed-size buffer (e.g. 256 bytes)
+       *   would be better
+       */
+      if (p1 != NULL)
+       { length += strlen(p1);
+       }
+      if (p2 != NULL)
+       { length += strlen(p2);
+       }
+      if (p3 != NULL)
+       { length += strlen(p3);
+       }
+      if (p4 != NULL)
+       { length += strlen(p4);
+       }
+
+      /* Ensure the message buffer is large enough for this message */
+      if (length+1 > message_buffer_size)
+       { message_buffer = memory_reallocate(message_buffer, length+1);
+         message_buffer_size = length+1;
+       }
+
+      /* Read the message */
+      messagetrans_lookup(&messages, tag, message_buffer, message_buffer_size, p1,p2,p3,p4, NULL);
+
+      /* Convert the message terminator to a C string terminator */
+      message_buffer[length] = '\0';
+    }
+   catch
+    { return tag;
+    }
+   catch_end
+
+   return message_buffer;
+ }
+
+
+
+
+const char* message_lookup_in_list(const char* tag, unsigned index)
+ { enum { tag_LIMIT = 20 };
+
+   char real_tag[tag_LIMIT];
+
+   assert(index < 1000);
+   assert(strlen(tag) < tag_LIMIT-3);
+
+   strcpy(real_tag, tag);
+   sprintf(real_tag + strlen(real_tag), "%03u", index);
+
+   return message_lookup(real_tag);
+ }

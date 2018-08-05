@@ -1,0 +1,33 @@
+/**** log.h ****/
+/* Log window
+ * (c) Paul Field
+ *
+ * v1.00 - 14/6/1996
+ */
+
+/* This exception can be thrown if the error has been reported to the DVIview log */
+enum
+ { exception_REPORTED = 0x10002
+ };
+
+
+
+void log_init(void);
+ /* Initialise the log window.
+  */
+
+void log_add_message(const char* source, const char* message);
+ /* Pre: source != NULL
+  *      message != NULL
+  *
+  * Registers message with the log as coming from source.
+  */
+
+
+void log_add_sub_message(const char* source, const char* subsource, const char* message_text);
+ /* Pre: source != NULL
+  *      subsource != NULL
+  *      message != NULL
+  *
+  * Registers message with the log as coming from subsource, which is part of source.
+  */

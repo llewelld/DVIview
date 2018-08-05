@@ -1,0 +1,33 @@
+/*** saver.h ***/
+/* Handles "saveas" dialogue boxes which use the save_buffer
+ * (c) Paul Field
+ * v1.00 - 1/11/1995
+ * v1.01 - 15/12/1995
+ *   Added code to validate saver_create()'s precondition.
+ *   Hourglass activated for save
+ */
+
+
+#ifndef toolbox_H
+#include "toolbox.h"
+#endif
+
+
+typedef void (*saver_fn)(toolbox_o save_as_id);
+ /* User-supplied function to perform the save.
+  */
+
+
+void saver_create(toolbox_o save_as_id, saver_fn perform_save);
+ /* Pre: save_as_id is the id of a type 3 saveas toolbox object
+  *
+  * Creates a 'saver' which responds to 'save' actions from the saveas object by setting
+  * up an appropriate save buffer and calling perform_save.
+  * perform_save should call save_buffer_send...() routines to send its data. It may
+  * throw exceptions which will cause the save to be aborted and the exception to be rethrown
+  * (so you can catch them in your main event loop)
+  * Note that the hourglass is activated before perform_save is called (and turned off afterwards).
+  *
+  * In debugging mode, this checks that the object is a save as object but
+  * it can't check that type 3 saving is expected.
+  */

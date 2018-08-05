@@ -1,0 +1,15 @@
+; backtr_sup.s
+; Machine code support function for the backtrace() function
+; (c) Paul Field 1995
+
+
+        AREA |C$$code|, CODE, READONLY
+
+        EXPORT  backtrace_support_current_frame
+backtrace_support_current_frame
+        STR      fp,[a1,#&18]
+        STR      sp,[a1,#&1c]
+        STR      sl,[a1,#&24]!
+        MOVS     pc,lr
+
+        END

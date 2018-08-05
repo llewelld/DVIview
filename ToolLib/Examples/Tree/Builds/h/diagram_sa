@@ -1,0 +1,12 @@
+/*** diagram_save.h ***/
+/* Save the line_store as a Draw diagram via save_buffer
+ * This module assumes lines in the line_store are stored using OS coordinates
+ * (c) Paul Field
+ * v1.00 - 22/11/95
+ */
+
+void diagram_save(void);
+ /* Saves the lines in the line_store as a Draw diagram using
+  * the save_buffer
+  */
+

@@ -1,0 +1,94 @@
+/*** set.h ***/
+/* Abstract data type :
+ *   Simple set
+ * (c) Paul Field
+ * V1.00 - 15/7/1995
+ */
+
+#ifndef _set_h
+#define _set_h
+
+#include "bool.h"
+
+#include <stddef.h>
+
+/* This module implements a simple set
+ * Unlike lists and queues, sets contain copies of your objects.
+ *
+ * This module performs extensive checks on function arguments if
+ * it is compiled without NDEBUG defined.
+ * The module can also help to detect memory leaks. When your program
+ * exits the set module will output (on stderr) the number of sets not
+ * destroyed.
+ * You MUST compile your production code with NDEBUG defined. There is
+ * a large time overhead for these checks.
+ */
+
+typedef struct set_str set;              /* Opaque types */
+
+
+typedef int (*compare_fn)(const void *o1, const void *o2);
+ /* Returns either:
+  *   -ve if o1 < o2
+  *    0  if o1 = o2
+  *   +ve if o1 > o2
+  * Or:
+  *    0  if o1 = o2
+  *   +ve if o1 != o2
+  */
+
+typedef size_t (*sizeof_fn)(const void *o);
+ /* Returns the size of object o
+  */
+
+
+
+bool set_create(set **s, compare_fn, sizeof_fn, size_t size);
+ /* Pre: s != NULL, **s is not already a set
+  *      sizeof_fn == NULL <-> size != 0
+  *      compare_fn == NULL -> size_of == NULL
+  *
+  * Creates an empty set in *s. Returns TRUE if successful.
+  * The functions provided allow copies of variable-sized objects (e.g. strings) to be made and compared.
+  * If compare_fn is NULL then objects will be compared byte-by-byte.
+  * If objects are variable-sized (e.g. strings) then sizeof_fn should be supplied
+  * otherwise size should be supplied.
+  */
+
+
+void set_destroy(set *s);
+ /* Frees the memory taken up by the set
+  */
+
+bool set_insert(set *s, const void *o);
+ /* Pre: s != NULL
+  * Inserts o into s and returns TRUE if the insertion was successful.
+  */
+
+void set_remove(set *s, const void *o);
+ /* Removes any object that is equal to o from s
+  */
+
+void *set_contains(const set *s, const void *o);
+ /* Returns the object in s which is equal to o or NULL if there is no such object
+  */
+
+unsigned set_elements(const set *s);
+ /* Returns the number of elements in the set
+  */
+
+void *set_nth_element(const set *s, unsigned n);
+ /* Pre: 1 <= n <= set_elements(s)
+  *
+  * Returns the nth element of the set.
+  * Since sets are naturally unordered entities you should not rely on elements
+  * being extracted in any particular order.
+  * Example:
+  *   for (n=1; n <= set_elements(s); n++)
+  *    { do_something(set_nth_element(s,n));
+  *    }
+  *  Access to elements using an increasing loop counter is O(1), although
+  *  or other styles of access the worst case is O(n)
+  */
+
+#endif

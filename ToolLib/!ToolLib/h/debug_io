@@ -1,0 +1,18 @@
+/*** debug_io.h ***/
+/* Debug (stream) input/output routines.
+ * (c) Paul Field 1998
+ * v1.00 - 15/2/1998
+ */
+
+
+void debug_io_flush(void);
+ /* If stderr is attached to a RISC OS file and the environmental
+  * variable <ToolLib$Flush> is defined, this call
+  * forces all bytes to be written to the file.
+  *
+  * This call relies on the internal format of Acorn's FILE
+  * implementation, which could change between releases of the compiler
+  * and is unlikely to be the same from compiler to compiler.
+  * The purpose of the call is to force data to be written to disc so that
+  * if a machine-reset is necessary, debug data is not lost.
+  */

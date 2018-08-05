@@ -1,0 +1,47 @@
+/*** file_error.h ***/
+/* Create exceptions for file errors */
+
+#include "file_error.h"
+
+#include <stdio.h>
+#include <string.h>
+
+#include "macros.h"
+
+#include "exception.h"
+#include "message.h"
+
+
+enum
+ { description_LIMIT = 100
+ };
+
+
+
+const char *file_error_named(const char* filename, const char* type, const char* description_tag)
+ { char description[description_LIMIT];
+
+   strncpy(description, message_lookup(description_tag), description_LIMIT);
+   description[description_LIMIT-1] = '\0';
+
+   return message_lookup_and_substitute("FileError", description, type, filename, NULL);
+ }
+
+
+
+
+const char *file_error(const file* f, const char* type, const char* description_tag)
+ { return file_error_named(file_name(f), type, description_tag);
+ }
+
+
+
+void file_error_named_throw(const char* filename, const char* type, const char* description_tag)
+ { throw_string(file_error_named(filename, type, description_tag));
+ }
+
+
+
+void file_error_throw(const file* f, const char* type, const char* description_tag)
+ { throw_string(file_error(f, type, description_tag));
+ }

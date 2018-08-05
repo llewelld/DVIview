@@ -1,0 +1,209 @@
+/*** print_core.c ***/
+/* The core loop of a printing system
+ * (c) Paul Field 1996
+ */
+
+#include "print_core.h"
+
+#include <assert.h>
+#include <signal.h>
+#include <stdio.h>
+
+#include "hourglass.h"
+#include "pdriver.h"
+
+//#include "debug_io.h"
+#include "exception.h"
+
+#include "print_job.h"
+
+
+
+static void print_draw_side(print_side* s, unsigned copies, unsigned side_number)
+ { os_box clip;
+   bool   more;
+   int    id;
+
+   more = pdriver_draw_page(copies, &clip, side_number, "", &id);
+   while(more)
+    {
+#ifdef PRINT_VERBOSE
+         fprintf(stderr, " -- About to draw page with id %u\n", id);
+         debug_io_flush();
+#endif
+
+      s->draw(&clip, id);
+
+#ifdef PRINT_VERBOSE
+         fprintf(stderr, " -- About to check for next redraw rectangle\n");
+         debug_io_flush();
+#endif
+
+{ os_error* e = xpdriver_get_rectangle(&clip, &more, &id);
+  if (e != NULL)
+  { fprintf(stderr, "    Error when getting rectangle: %s\n", e->errmess);
+#ifdef PRINT_VERBOSE
+    debug_io_flush();
+#endif
+    throw_os(e);
+  }
+  else
+  { fprintf(stderr, "    No error\n");
+#ifdef PRINT_VERBOSE
+    debug_io_flush();
+#endif
+  }
+}
+
+/*      more = pdriver_get_rectangle(&clip, &id);*/
+
+    }
+ }
+
+
+
+
+static bool print_should_declare_fonts(void)
+ { bits     features;
+
+   pdriver_info(NULL, NULL, NULL, &features, NULL, NULL, NULL, NULL);
+   return (features & pdriver_FEATURE_DECLARE_FONT) != 0;
+ }
+
+
+
+
+void print_core_print(const char* job_name, const print_iterator* sides, const print_reporter* reporter)
+ { assert(job_name);
+   assert(sides);
+   assert(reporter);
+
+   reporter->open(sides->number());
+
+   try
+    { unsigned side_num;
+
+      hourglass_on();
+
+      /* Start the job and declare the fonts */
+      print_job_start(job_name);
+
+      if (print_should_declare_fonts)
+       { sides->declare_fonts();
+       }
+
+      print_job_pause();
+
+      /* Loop through all the sides */
+      side_num = 1;
+      do
+       { print_side* s;
+
+         /* Report the side about to be printed */
+         reporter->set_current(side_num);
+
+#ifdef PRINT_VERBOSE
+         fprintf(stderr, "About to print side %u\n", side_num);
+         debug_io_flush();
+#endif
+
+         /* Construct the current side */
+         s = sides->get_side();
+
+         try
+          { unsigned copies;
+
+#ifdef PRINT_VERBOSE
+         fprintf(stderr, "Finding number of copies\n");
+         debug_io_flush();
+#endif
+            copies = sides->copies();
+            assert(copies > 0);
+
+            /* Print the side */
+            print_job_resume();
+
+#ifdef PRINT_VERBOSE
+         fprintf(stderr, "About to declare side\n");
+         debug_io_flush();
+#endif
+
+            s->declare();
+
+#ifdef PRINT_VERBOSE
+         fprintf(stderr, "About to draw side\n");
+         debug_io_flush();
+#endif
+
+            print_draw_side(s, copies, side_num);
+
+#ifdef PRINT_VERBOSE
+         fprintf(stderr, "About to pause print job\n");
+         debug_io_flush();
+#endif
+            print_job_pause();
+
+            side_num += copies;
+          }
+         catch
+          {
+#ifdef PRINT_VERBOSE
+         fprintf(stderr, "Error detected - destroying current side\n");
+         debug_io_flush();
+#endif
+            s->destruct();
+            throw();
+          }
+         catch_end
+
+         s->destruct();
+       }
+      while(sides->next());
+
+      assert(side_num == sides->number()+1);
+
+      /* From the description of PDriver_EndJob (PRM 3-617), it appears that you don't
+       * need to resume the job before ending it. However, if you don't, the PostScript
+       * driver will generate an empty list of document fonts and document-supplied fonts
+       * in the PostScript trailer.
+       */
+      print_job_resume();
+
+      print_job_end();
+      hourglass_off();
+      reporter->close();
+    }
+   catch
+    { const exception *e;
+
+#ifdef PRINT_VERBOSE
+         fprintf(stderr, "Error detected - aborting print job\n");
+         debug_io_flush();
+#endif
+
+      print_job_abort();
+
+#ifdef PRINT_VERBOSE
+         fprintf(stderr, "   - turning off hourglass & closing window\n");
+         debug_io_flush();
+#endif
+
+      hourglass_off();
+      reporter->close();
+
+#ifdef PRINT_VERBOSE
+         fprintf(stderr, "   - rethrowing exception\n");
+         debug_io_flush();
+#endif
+
+      /* Convert Escape presses into a user exception */
+      e = exception_current();
+      if (e->type == exception_signal && e->error.signal_id == SIGINT)
+       { throw_user(exception_PrintAborted);
+       }
+      else
+       { throw();
+       }
+    }
+   catch_end
+ }

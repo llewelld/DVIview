@@ -1,0 +1,41 @@
+/*** vp_choices.h ***/
+/* This structure specifies a print action
+ * (c) Paul Field 1996
+ * v1.00 - 7/5/1996
+ */
+
+#ifndef vp_choices_h
+#define vp_choices_h
+
+
+#include "bool.h"
+
+
+typedef enum vprint_type_id_enum
+ { vprint_type_all,
+   vprint_type_2pages,
+   vprint_type_4pages,
+   vprint_type_8pages,
+   vprint_type_2up,
+   vprint_type_4up,
+
+   vprint_type_LIMIT
+ }vprint_type_id;
+
+
+
+
+typedef struct vprint_choices
+ { bool           print_whole_document;
+   unsigned       first_page;  /* pages are numbered from 0 */
+   unsigned       last_page;   /* pages are numbered from 0 */
+   unsigned       copies;
+   bool           face_up;
+   bool           straight_path;
+   bool           collate;
+   bool           pause;
+   bool           double_sided;
+   vprint_type_id type;
+ }vprint_choices;
+
+#endif

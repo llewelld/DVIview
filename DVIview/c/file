@@ -1,0 +1,169 @@
+/*** file.c ***/
+/* Simple read-only file interface
+ * (c) Paul Field 1996
+ */
+
+#include "file.h"
+
+#include <assert.h>
+
+#include "macros.h"
+#include "osargs.h"
+#include "osfind.h"
+#include "osfile.h"
+#include "osgbpb.h"
+
+#include "allocate.h"
+#include "exception.h"
+#include "message.h"
+
+
+
+struct file_str
+ { os_f handle;
+ };
+
+
+
+
+bool file_exists(const char* name)
+ { return osfile_read_stamped_no_path(name, NULL, NULL, NULL, NULL, NULL) == fileswitch_IS_FILE;
+ }
+
+
+
+
+file* file_construct(const char* name)
+ { file* f;
+
+   assert(name != NULL);
+
+   f = memory_allocate(sizeof(*f));
+   try
+    { f->handle = osfind_openin(osfind_NO_PATH, name, NULL);
+
+      if (f->handle == 0)
+       { throw_string(message_lookup_and_substitute("NoFile", name, 0,0,0));
+       }
+    }
+   catch
+    { memory_free(f);
+      throw();
+    }
+   catch_end
+
+   assert(file_get_position(f) == 0);
+
+   return f;
+ }
+
+
+
+
+void file_destruct(file* f)
+ { if (f != NULL)
+    { xosfind_close(f->handle);
+      memory_free(f);
+    }
+ }
+
+
+
+
+
+const char* file_name(const file* f)
+ { static char*     name = NULL;
+   static unsigned  size_allocated_for_name = 0;
+
+   unsigned size_needed;
+   unsigned should_be_one;
+
+   assert(f != NULL);
+
+   size_needed = 1 - osargs_read_path(f->handle, NULL, 0);
+
+   if (size_needed > size_allocated_for_name)
+    { name = memory_reallocate(name, size_needed);
+      size_allocated_for_name = size_needed;
+    }
+
+   should_be_one = osargs_read_path(f->handle, name, size_needed);
+   assert(should_be_one == 1);
+
+   return name;
+ }
+
+
+
+
+void file_set_position(file* f, unsigned position)
+ { assert(f != NULL);
+   assert(position < file_extent(f));
+
+   osargs_set_ptr(f->handle, position);
+
+   assert(file_get_position(f) == position);
+ }
+
+
+
+
+unsigned file_get_position(const file* f)
+ { assert(f != NULL);
+
+   return osargs_read_ptr(f->handle);
+ }
+
+
+
+
+unsigned file_extent(const file* f)
+ { assert(f != NULL);
+
+   return osargs_read_ext(f->handle);
+ }
+
+
+
+
+void file_read(file* f, void* destination, size_t num_bytes_to_read)
+ {
+#ifndef NDEBUG
+   unsigned old_position;
+   old_position = file_get_position(f);
+#endif
+
+   assert(f != NULL);
+   assert(file_get_position(f) + num_bytes_to_read <= file_extent(f));
+
+   osgbpb_read(f->handle, destination, num_bytes_to_read);
+
+   assert(file_get_position(f) == old_position + num_bytes_to_read);
+ }
+
+
+
+
+void file_read_at(file* f, void* destination, size_t num_bytes_to_read, unsigned position)
+ { assert(f != NULL);
+   assert(position + num_bytes_to_read < file_extent(f));
+
+   osgbpb_read_at(f->handle, destination, num_bytes_to_read, position);
+
+   assert(file_get_position(f) == position + num_bytes_to_read);
+ }
+
+
+
+
+void file_time_stamp(const file* f, unsigned char UTC[5])
+ { bits  high_byte;
+
+   assert(f != NULL);
+   assert(UTC != NULL);
+
+   osfile_read_stamped_no_path(file_name(f), &high_byte, (bits*)&UTC[0], NULL, NULL, NULL);
+
+   assert(high_byte < 256);
+   UTC[4] = high_byte;
+ }

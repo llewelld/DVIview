@@ -1,0 +1,170 @@
+/**** optionfile.c ****/
+/* Handles an option file
+ * (c) Paul Field
+ */
+
+/* An option file is a number of lines of the form:
+ * <Option> [:<OptionParams>]
+ */
+
+
+#include "optionfile.h"
+
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "message.h"
+#include "error.h"
+
+#include "file_error.h"
+
+
+enum
+ { RegistrationMax = 5,
+   BufferSize = 80
+ };
+
+static const char options_tag[] = "DVIviewChoicesFormat_1\n";
+
+static unsigned registered=0;
+static options_parse_fn  parse[RegistrationMax];
+static options_save_fn   save[RegistrationMax];
+static options_finish_fn finish[RegistrationMax];
+
+#ifndef NDEBUG
+static bool loaded = FALSE;
+#endif
+
+
+void optionsfile_register(options_parse_fn p, options_save_fn s, options_finish_fn f)
+ { assert(p);
+   assert(s);
+   assert(registered < RegistrationMax);
+   assert(!loaded); /* Do you really want to register functions *after* the file is loaded? */
+
+   parse[registered]  = p;
+   save[registered]   = s;
+   finish[registered] = f;
+   registered++;
+ }
+
+
+
+
+static const char* optionsfile_filename(void)
+ { const char* filename;
+
+   filename = getenv("DVIview$OptionsFile");
+   if (!filename)
+    { filename = "<DVIview$Dir>.Choices";
+    }
+   return filename;
+ }
+
+
+
+
+void optionsfile_load(void)
+ { FILE*       file;
+   char        buffer[BufferSize];
+   const char* filename;
+   char        choices[20];
+
+#ifndef NDEBUG
+   loaded = TRUE;
+#endif
+
+   strncpy(choices, message_lookup("Choices"), 20);
+   choices[19] = '\0';
+
+   filename = optionsfile_filename();
+   file = fopen(filename, "r");
+   if (file)
+    { unsigned n;
+
+      if (fgets(buffer, BufferSize, file))
+       { if (strcmp(buffer, options_tag) != 0)
+          { error_report_string(file_error_named(filename, choices, "MoreRecent"));
+            fclose(file);
+            return;
+          }
+       }
+
+      while(fgets(buffer, BufferSize, file))
+       { char*    seperator;
+         char*    params;
+         unsigned length;
+
+         length = strlen(buffer);
+
+         /* Strip '\n' from buffer if it's there */
+         assert(length > 0);  /* according to description of fgets() */
+         if (buffer[length-1] == '\n')
+          { buffer[--length] = '\0';
+          }
+
+         /* Find parameters */
+         seperator = strchr(buffer, ':');
+         if (seperator)
+          { *seperator = '\0';
+            params = seperator+1;
+          }
+         else
+          { params = buffer+length;
+          }
+
+         /* Pass option around until it is recognised */
+         for (n=0; n < registered && !parse[n](buffer, params); n++)
+          {}
+#ifndef NDEBUG
+         if (n==registered)
+          { fprintf(stderr, "Warning: option %s (%s) not recognised\n", buffer, params);
+          }
+#endif
+       }
+      for (n=0; n < registered; n++)
+       { if (finish[n])
+          { finish[n]();
+          }
+       }
+      if (!feof(file))
+       { error_report_string(file_error_named(filename, choices, "FileCorrupt"));
+       }
+      fclose(file);
+    }
+   else
+    { error_report_string(file_error_named(filename, choices, "NoOpen"));
+    }
+ }
+
+
+
+
+void optionsfile_save(void)
+ { FILE*       file;
+   const char* filename;
+   char        choices[20];
+
+   strncpy(choices, message_lookup("Choices"), 20);
+   choices[19] = '\0';
+
+   filename = optionsfile_filename();
+   file = fopen(filename, "w");
+   if (file)
+    { unsigned n;
+
+      fputs(options_tag, file);
+      /* Pass option around until it is recognised */
+      for (n=0; n < registered; n++)
+       { save[n](file);
+       }
+      if (ferror(file))
+       { error_report_string(file_error_named(filename, choices, "FileSaveError"));
+       }
+      fclose(file);
+    }
+   else
+    { error_report_string(file_error_named(filename, choices, "FileSaveError"));
+    }
+ }

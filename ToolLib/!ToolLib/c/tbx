@@ -1,0 +1,172 @@
+/*** tbx.c ***/
+/* Various toolbox utilities
+ * (c) Paul Field
+ */
+
+#include "tbx.h"
+
+#include <assert.h>
+#include <stdio.h>
+
+#include "displayfield.h"
+#include "macros.h"
+#include "radiobutton.h"
+#include "stringset.h"
+#include "writablefield.h"
+
+#include "allocate.h"
+
+
+enum { NeverReachHere = FALSE };
+
+
+const char* tbx_task_name(void)
+ { static char* task_name = NULL;
+   unsigned     task_name_limit;
+
+   if (task_name == NULL)
+    { task_name_limit = toolboxgetsysinfo_task_name(NULL, 0);
+      task_name = memory_allocate(task_name_limit);
+      toolboxgetsysinfo_task_name(task_name, task_name_limit);
+    }
+   return task_name;
+ }
+
+
+
+
+#ifndef NDEBUG
+static bool tbx_object_is_shared(const char* name, toolbox_o id)
+ { toolbox_o new_id;
+
+   /* It would be nice to look up the toolbox_OBJECT_SHARED flags in the
+    * object template but there is no way to access this
+    * (we don't have permission to access memory returned by
+    * toolbox_template_look_up()).
+    * Instead, we create the object again and check that we get a
+    * copy of the object id of the existing object.
+    */
+
+   new_id = toolbox_create_object(0, (toolbox_id)name);
+   toolbox_delete_object(0, new_id);
+   return id == new_id;
+ }
+#endif
+
+
+
+
+toolbox_o tbx_shared_object_id(const char* name)
+ { toolbox_o id;
+
+   assert(name != NULL);
+
+   id = toolbox_create_object(0, (toolbox_id)name);
+   assert(tbx_object_is_shared(name, id));
+
+   return id;
+ }
+
+
+
+
+void tbx_gadget_faded_iff(toolbox_o window, toolbox_c gadget, bool faded)
+ { gadget_flags flags;
+
+   flags = gadget_get_flags(0, window, gadget);
+
+   if (faded)
+    { flags |= gadget_FADED;
+    }
+   else
+    { flags &= ~gadget_FADED;
+    }
+   gadget_set_flags(0, window, gadget, flags);
+ }
+
+
+
+
+void tbx_gadget_set_string(toolbox_o window, toolbox_c gadget, const char* string)
+ { void (*set_function)(bits, toolbox_o, toolbox_c, const char*);
+
+   assert(string != NULL);
+
+   switch(gadget_get_type(0, window, gadget))
+    { case class_DISPLAY_FIELD:
+         set_function = displayfield_set_value;
+         break;
+
+      case class_STRING_SET:
+         set_function = stringsetsetselected_string;
+         break;
+
+      case class_WRITABLE_FIELD:
+         set_function = writablefield_set_value;
+         break;
+
+      default:
+         assert(NeverReachHere);
+         return;
+    }
+
+   set_function(0, window, gadget, string);
+ }
+
+
+
+
+void tbx_gadget_get_string(toolbox_o window, toolbox_c gadget, char* string, size_t size)
+ { int (*get_function)(bits, toolbox_o, toolbox_c, char*, int size);
+
+   assert(string != NULL);
+
+   switch(gadget_get_type(0, window, gadget))
+    { case class_DISPLAY_FIELD:
+         get_function = displayfield_get_value;
+         break;
+
+      case class_STRING_SET:
+         get_function = stringsetgetselected_string;
+         break;
+
+      case class_WRITABLE_FIELD:
+         get_function = writablefield_get_value;
+         break;
+
+      default:
+         assert(NeverReachHere);
+         return;
+    }
+
+   get_function(0, window, gadget, string, size);
+ }
+
+
+
+
+void tbx_displayfield_set_number(toolbox_o window, toolbox_c field, int value)
+ { char field_text[DEC_WIDTH+1];
+
+   sprintf(field_text, "%d", value);
+   displayfield_set_value(0, window, field, field_text);
+ }
+
+
+
+
+unsigned tbx_radioarray_get_value(toolbox_o window, toolbox_c gadget)
+ { toolbox_c on_id;
+
+   radiobutton_get_state(0, window, gadget, &on_id);
+
+   assert(on_id >= gadget);
+   return on_id - gadget;
+ }
+
+
+
+
+void tbx_radioarray_set_value(toolbox_o window, toolbox_c gadget, unsigned value)
+ { radiobutton_set_state(0, window, gadget+value, TRUE);
+ }

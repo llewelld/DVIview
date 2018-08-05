@@ -1,0 +1,111 @@
+/**** page.h ****/
+/* Loads and manages a page
+ * (c) Paul Field 1995
+ *
+ * v1.01 - 23/5/1996 - Now uses a page_context to simplify other operations
+ */
+
+#ifndef page_h
+#define page_h
+
+#include "font_table.h"
+#include "font_set.h"
+
+typedef struct page_str page;
+
+
+typedef struct page_context_str
+ { byte_stream* stream;      /* The byte stream from which the page was loaded */
+   unsigned     stack_size;  /* The depth of stack needed to process the page (given in the dvi file postamble) */
+   font_table*  fonts;       /* The dvi file's font table */
+   double       dvi_to_draw; /* A scaling factor, multiplication by which converts dvi units to draw units */
+   int          left_offset; /* The left margin of the page in Draw units */
+   int          top_offset;  /* The top margin of the page in Draw units */
+ }
+page_context;
+
+
+
+
+page* page_construct(int pointer, int count[10], const page_context* context);
+ /* Pre: pointer is the file pointer of a 'bop' command in the dvi file
+  *      count is the array of counts in the bop command
+  *      context contains general information about the document the page is in.
+  *      The structure pointed to by context must exist for as long as this page does.
+  * Exceptions: os exceptions
+  */
+
+
+void page_destruct(page* p);
+ /* Pre: p == NULL || p's reference count == 0
+  *
+  * Frees the memory associated with p
+  */
+
+
+void page_inc_reference(page* p);
+ /* Pre: p != NULL
+  * Exceptions: os exceptions (only if reference count == 0)
+  *
+  * Registers that a use of p is being made (which may cause the page to be loaded from disc)
+  */
+
+
+void page_dec_reference(page* p);
+ /* Pre: p == NULL || p's reference count > 0
+  *
+  * Register that a use of p is no longer being made
+  */
+
+
+void page_draw(const page* p, int x, int y, unsigned scale_percent, const os_box* clip);
+ /* Pre: p's reference count > 0
+  * Exceptions: os exceptions
+  *
+  * Draws p with its top left hand corner at screen coordinate (x,y) and magnified by scale where:
+  * x and y are in draw units
+  * clip is the current graphics clipping rectangle (typically returned by the Wimp)
+  */
+
+
+void page_bounds(const page* p, int x, int y, os_box* bounds);
+ /* Pre: p's reference count > 0
+  *      (x,y) is the top left corner of the page in draw units
+  *
+  * Sets bounds to the bounding box of the material on page p.
+  */
+
+
+void page_add_fonts_to_set(const page* p, font_set* page_fonts);
+ /* Pre : p != NULL
+  * Exceptions: exception_NO_MEMORY, os exceptions
+  *
+  * Adds the fonts used in page p (including fonts used in pictures) to page_fonts.
+  * On exception the set may contain some fonts
+  */
+
+
+void page_save(const page* p, int x, int y);
+ /* Pre: p's reference count > 0
+  *      (x,y) is the top left corner of the page in draw units
+  *      A save_buffer should have been created
+  * Exceptions: os exceptions
+  *
+  * Saves the page as a draw file using the save_buffer module
+  */
+
+
+unsigned page_estimate_save_size(const page* p);
+ /* Pre: p's reference count > 0
+  * Returns the approximate size of the file produced by page_save
+  */
+
+
+
+#ifndef NDEBUG
+void page_debug_output(const page* p);
+#else
+#define page_debug_output(p)
+#endif
+
+#endif

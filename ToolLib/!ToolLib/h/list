@@ -1,0 +1,189 @@
+/*** list.h ***/
+/* Abstract data type :
+ *   Simple list (singly-linked)
+ * (c) Paul Field
+ * v1.00 - 16/5/1995
+ * v1.10 - 15/7/1995 - Change to use pointers to lists, make const-correct
+ * v1.20 -  2/4/1996 - Changed to use memory_allocate (and throw exceptions)
+ * v1.30 - 26/5/1996 - Add list_ptr and associated routines. Removed list_nth_element()
+ */
+
+#ifndef _list_h
+#define _list_h
+
+#include <stddef.h>
+
+#include "bool.h"
+
+/* This module implements a singly-linked list
+ * Elements to be placed in the list must be allocated by 'list_alloc_element'
+ * which acts like 'memory_allocate' and must be deallocated by 'list_free_element'
+ * An element can only appear in one list at a time. You can get
+ * around this restriction either by copying the object or by
+ * 'list_alloc_element'ing pointers to the object and placing these pointers
+ * in the lists.
+ *
+ * This module performs extensive checks on function arguments if
+ * it is compiled without NDEBUG defined.
+ * The module can also help to detect memory leaks. When your program
+ * exits the list module will output (on stderr) the number of lists not
+ * destroyed and the number of list elements (i.e. objects allocated with
+ * list_alloc_element()) not freed.
+ * You MUST compile your production code with NDEBUG defined. There is
+ * a large time overhead for these checks.
+ */
+
+
+/* Opaque types */
+typedef struct list_str           list;
+typedef struct list_element_str** list_ptr;
+
+
+void* list_alloc_element(size_t size);
+ /* Pre: size > 0
+  * Exceptions: exception_NO_MEMORY
+  *
+  * As 'memory_allocate' but objects returned can be placed in a list.
+  */
+
+
+void list_free_element(void* element);
+ /* Pre: element must not be a member of a list
+  *      (element may equal NULL)
+  * Exceptions: none
+  *
+  * As 'memory_free' but for 'list_alloc_element'ed objects.
+  */
+
+
+list* list_create(void);
+ /* Exceptions: exception_NO_MEMORY
+  *
+  * Creates and returns an empty list.
+  */
+
+
+void list_destroy(list* l);
+ /* Exceptions: none
+  * Complexity: linear
+  *
+  * Frees the memory taken up by the list
+  * (calls list_free_element for all elements in the list)
+  * 'l' may equal NULL
+  */
+
+
+bool list_is_empty(const list* l);
+ /* Exceptions: none
+  * Complexity: constant
+  *
+  * Returns TRUE if the list contains no elements.
+  */
+
+
+void list_cons(list* l, const void* element);
+ /* Pre: element was allocated by list_alloc_element(),
+  *      element is not presently in a list
+  * Exceptions: none
+  * Complexity: constant
+  *
+  * Adds element to the front of the list
+  *
+  * N.B. This call invalidates all list_ptrs pointing to elements of l.
+  */
+
+
+void *list_remove_head(list* l);
+ /* Pre: list is not empty
+  * Exceptions: none
+  * Complexity: constant
+  *
+  * Removes the element at the head of the list and returns it
+  *
+  * N.B. This call invalidates all list_ptrs pointing to elements of l.
+  */
+
+
+unsigned list_length(const list* l);
+ /* Exceptions: none
+  * Complexity: linear
+  *
+  * Returns the number of elements in the list
+  */
+
+
+list_ptr list_ptr_head(const list* l);
+ /* Exceptions: none
+  * Complexity: constant
+  *
+  * Returns a 'pointer' to the element at the head of the list.
+  * If the list is empty then returns the 'past the end' pointer.
+  */
+
+
+bool list_ptr_past_the_end(list_ptr lptr);
+ /* Exceptions: none
+  * Complexity: constant
+  *
+  * Returns TRUE if the lptr is past the end of the list
+  */
+
+
+void list_ptr_inc(list_ptr* lptr);
+ /* Pre: lptr != NULL
+  *      !list_ptr_past_the_end(*lptr)
+  * Exceptions: none
+  * Complexity: constant
+  *
+  * Increments the list pointer so it points to the next element in the list (or
+  * past the end).
+  */
+
+
+void* list_ptr_element(list_ptr lptr);
+ /* Pre: !list_ptr_past_the_end(lptr)
+  * Exceptions: none
+  * Complexity: constant
+  *
+  * Returns the element pointed to by lptr
+  */
+
+
+void list_ptr_add_element_after(list_ptr lptr, void* element);
+ /* Pre:  !list_ptr_past_the_end(lptr)
+  *       element was allocated by list_alloc_element(),
+  *       element is not presently in a list
+  * Exceptions: none
+  * Complexity: constant
+  *
+  * Adds element to the list after the element pointed to by lptr.
+  * i.e. list_ptr_inc(lptr), list_ptr_element(lptr) == element
+  *
+  * N.B. This call invalidates all list_ptrs for lptr's list, EXCEPT lptr
+  */
+
+
+void list_ptr_add_element_before(list_ptr lptr, void* element);
+ /* Pre:  element was allocated by list_alloc_element(),
+  *       element is not presently in a list
+  * Exceptions: none
+  * Complexity: constant
+  *
+  * Adds element to the list before the element pointed to by lptr.
+  * (Note that lptr may be the past-the-end value).
+  *
+  * N.B. This call invalidates all list_ptrs for lptr's list, INCLUDING lptr
+  */
+
+
+void list_ptr_remove_element(list_ptr lptr);
+ /* Pre:  !list_ptr_past_the_end(lptr)
+  * Exceptions: none
+  * Complexity: constant
+  *
+  * Removes the element pointed to by lptr from the list
+  *
+  * N.B. This call invalidates all list_ptrs for lptr's list.
+  */
+
+#endif

@@ -1,0 +1,79 @@
+/**** vp_status.c ****/
+/* System for reporting vprint's printing status
+ * (c) Paul Field
+ */
+
+#include "vp_status.h"
+
+#include <assert.h>
+
+#include "displayfield.h"
+
+#include "message.h"
+#include "nevent.h"
+#include "tbx.h"
+
+
+/* Component ids in the printing dialogue box */
+
+typedef enum printing_ids_enum
+ { dbx_current,
+   dbx_last
+ }printing_ids;
+
+
+static toolbox_o printing_id = toolbox_NULL_OBJECT;
+
+
+
+static void vp_status_open(unsigned sides)
+ { nevent_poll_controller old_controller;
+   wimp_event_no          event_code;
+
+   assert(printing_id == toolbox_NULL_OBJECT);
+
+   printing_id = toolbox_create_object(0, (toolbox_id)"Printing");
+
+   tbx_displayfield_set_number(printing_id, dbx_current, 1);
+   tbx_displayfield_set_number(printing_id, dbx_last,    sides);
+
+   /* Poll so that printing window appears
+    * (slightly dangerous because document could be closed while this is happening)
+    */
+   old_controller = nevent_force_poll_bits_clear(wimp_MASK_NULL); /* Make sure we get NULL events */
+
+   do
+    { event_code = nevent_poll(NULL, NULL);
+    }
+   while (event_code != wimp_NULL_REASON_CODE);
+
+   nevent_set_poll_control(old_controller);
+ }
+
+
+
+
+static void vp_status_set_current(unsigned side)
+ { assert(printing_id != toolbox_NULL_OBJECT);
+
+   tbx_displayfield_set_number(printing_id, dbx_current, side);
+ }
+
+
+
+
+static void vp_status_close(void)
+ { if (printing_id != toolbox_NULL_OBJECT)
+    { toolbox_delete_object(0, printing_id);
+      printing_id = toolbox_NULL_OBJECT;
+    }
+ }
+
+
+
+
+print_reporter vp_status =
+ { vp_status_open,
+   vp_status_set_current,
+   vp_status_close
+ };

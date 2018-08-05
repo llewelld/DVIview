@@ -1,0 +1,124 @@
+/*** tree.c ***/
+/* Simple tree drawing program
+ * (c) Paul Field
+ * v1.00 - 7/10/95
+ * v2.00 - 21/11/95 (More complex trees)
+ */
+
+#include "tree.h"
+
+#include "fast_trig.h"
+
+
+enum { level_max = 15 };
+
+
+/* In a future version, the choose_colour function will probably be
+ * replaced with a lookup table passed in as a parameter
+ */
+static colour choose_colour(unsigned remaining_depth)
+ { unsigned long red;
+   unsigned long green;
+   unsigned long blue;
+   unsigned      level;
+
+   if (remaining_depth <= level_max)
+    { level = level_max - remaining_depth;
+    }
+   else
+    { level = 0;
+    }
+
+   red =  8UL * level;
+   if (red > 255)
+    { red = 255;
+    }
+
+   green = 16UL * level;
+   if (green > 255)
+    { green = 255;
+    }
+
+   blue =  2UL * level;
+   if (blue > 255)
+    { blue = 255;
+    }
+
+   return (blue << 16) | (green << 8) | red;
+ }
+
+
+
+
+static void tree_calculate_recursive
+ ( int x,
+   int y,
+   const tree_state *state,
+   const tree_parameters *parameters,
+   const line_processor *lines
+ )
+ { int end_x;
+   int end_y;
+   int segment_x_change;  /* Change in x coordinate when you move along the branch by one segment */
+   int segment_y_change;  /* Change in y coordinate when you move along the branch by one segment */
+
+   /* Calculate coordinate changes along a segment */
+   segment_x_change = (int)(state->segment_length * fast_sin(state->tree_angle));
+   segment_y_change = (int)(state->segment_length * fast_cos(state->tree_angle));
+
+
+   /* Draw the main tree shaft */
+   end_x = x + parameters->segments * segment_x_change;
+   end_y = y + parameters->segments * segment_y_change;
+   lines->add_line(choose_colour(state->remaining_depth), x, y, end_x, end_y);
+
+
+   if (state->remaining_depth > 1)
+    { tree_state branch_state;
+      unsigned   segment_num;
+      int        branch_x;
+      int        branch_y;
+
+      /* Branches are actually trees. Calculate the tree state for branches on the left of the main shaft */
+      branch_state.segment_length  = (unsigned)(state->segment_length * parameters->length_scale);
+      branch_state.tree_angle      = state->tree_angle - state->branch_angle;
+      branch_state.branch_angle    = (int)(state->branch_angle * parameters->angle_scale);
+      branch_state.remaining_depth = state->remaining_depth-1;
+
+      /* Draw the branches on the left of the main shaft */
+      branch_x = x + (int)(segment_x_change * parameters->left_proportion);
+      branch_y = y + (int)(segment_y_change * parameters->left_proportion);
+
+      for (segment_num = 0; segment_num < parameters->segments; segment_num++)
+       { tree_calculate_recursive(branch_x, branch_y, &branch_state, parameters, lines);
+         branch_x += segment_x_change;
+         branch_y += segment_y_change;
+         branch_state.segment_length = (unsigned)(branch_state.segment_length * parameters->length_scale_scale);
+       }
+
+      /* Calculate the tree state for branches on the right of the main shaft */
+      /* Branches on the right are the same as those on the left except for their angle */
+      branch_state.tree_angle = state->tree_angle + state->branch_angle;
+      branch_state.segment_length  = (unsigned)(state->segment_length * parameters->length_scale);
+
+      /* Draw the branches on the right of the main shaft */
+      branch_x = x + (int)(segment_x_change * parameters->right_proportion);
+      branch_y = y + (int)(segment_y_change * parameters->right_proportion);
+
+      for (segment_num = 0; segment_num < parameters->segments; segment_num++)
+       { tree_calculate_recursive(branch_x, branch_y, &branch_state, parameters, lines);
+         branch_x += segment_x_change;
+         branch_y += segment_y_change;
+         branch_state.segment_length = (unsigned)(branch_state.segment_length * parameters->length_scale_scale);
+       }
+    }
+ }
+
+
+
+
+void tree_calculate(int x, int y, const tree_def *tree, const line_processor *lines)
+ { lines->initialise();
+   tree_calculate_recursive(x, y, &tree->initial_state, &tree->parameters, lines);
+   lines->finished();
+ }
